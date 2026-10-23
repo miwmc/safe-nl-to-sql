@@ -1,6 +1,4 @@
 {
-  "model": "opusplan",
-  "effortLevel": "medium",
   "permissions": {
     "allow": [
       "Bash(dotnet build *)",
@@ -23,6 +21,7 @@
       "Read(./.env)"
     ]
   },
+  "model": "opusplan",
   "hooks": {
     "PreToolUse": [
       {
@@ -35,5 +34,9 @@
         ]
       }
     ]
+  },
+  "effortLevel": "medium",
+  "enabledPlugins": {
+    "csharp-lsp@claude-plugins-official": true
   }
 }

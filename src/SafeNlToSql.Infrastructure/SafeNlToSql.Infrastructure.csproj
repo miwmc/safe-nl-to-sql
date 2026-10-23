@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SafeNlToSql.Application\SafeNlToSql.Application.csproj" />
+  </ItemGroup>
+
+</Project>
