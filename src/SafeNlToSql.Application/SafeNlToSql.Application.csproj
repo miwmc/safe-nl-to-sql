@@ -1,3 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
+  <ItemGroup>
+    <InternalsVisibleTo Include="SafeNlToSql.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="180.140.0" />
+  </ItemGroup>
 </Project>

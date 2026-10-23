@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # PR description scratch file
 .pr-description.md
+
+# Personal Claude Code settings
+.claude/settings.local.json
