@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SafeNlToSql.Api/SafeNlToSql.Api.csproj" />
+    <Project Path="src/SafeNlToSql.Application/SafeNlToSql.Application.csproj" />
+    <Project Path="src/SafeNlToSql.Infrastructure/SafeNlToSql.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SafeNlToSql.IntegrationTests/SafeNlToSql.IntegrationTests.csproj" />
+    <Project Path="tests/SafeNlToSql.UnitTests/SafeNlToSql.UnitTests.csproj" />
+  </Folder>
+</Solution>
