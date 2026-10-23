@@ -43,7 +43,7 @@ Parse with ScriptDom (TSql160Parser). Regex is not enough. Reject when:
 4. It references any table other than dbo.Certificates (including joins, subqueries, CTEs over other tables, system views like sys.tables or INFORMATION_SCHEMA).
 5. It selects or filters on a column outside the allowlist: CertificateNumber, EquipmentName, EquipmentType, Metric, CalibrationDate, IsCompliant. ClientName and `SELECT *` are rejected.
 6. It uses a date filter on any column other than CalibrationDate.
-7. It uses SELECT INTO, OPENROWSET, OPENQUERY, or any function outside a small allowlist (e.g. GETDATE, DATEADD, COUNT).
+7. It uses SELECT INTO, OPENROWSET, OPENQUERY, any FOR clause (FOR XML, FOR JSON, FOR BROWSE), any OPTION query hint, or any function outside a small allowlist (e.g. GETDATE, DATEADD, COUNT).
 8. It has no TOP or TOP is above 100 (or add TOP 100 automatically; decide during PR 2 and document the choice).
 
 Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.

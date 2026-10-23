@@ -20,15 +20,20 @@ public sealed class SqlGuard
             return GuardResult.Reject(SqlGuardReasons.NotParseable);
         }
 
-        var statementCount = script.Batches.Sum(batch => batch.Statements.Count);
-        if (statementCount == 0)
+        var statements = script.Batches.SelectMany(batch => batch.Statements).ToList();
+        if (statements.Count == 0)
         {
             return GuardResult.Reject(SqlGuardReasons.NoStatement);
         }
 
-        if (statementCount > 1)
+        if (statements.Count > 1)
         {
             return GuardResult.Reject(SqlGuardReasons.MultipleStatements);
+        }
+
+        if (statements[0] is not SelectStatement)
+        {
+            return GuardResult.Reject(SqlGuardReasons.NotSelect);
         }
 
         return GuardResult.Allow();
