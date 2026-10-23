@@ -14,13 +14,13 @@ disable-model-invocation: true
 <one or two lines on what this PR does and which PR from docs/SPEC.md it is>
 
 ## How I used Claude Code
-- Plan I approved / changed: TODO (João)
-- What it got right: TODO (João)
-- What I changed by hand and why: TODO (João)
+- Plan I approved / changed: TODO (Lino)
+- What it got right: TODO (Lino)
+- What I changed by hand and why: TODO (Lino)
 
 ## Tests
 <what is covered, the command to run them, and the result>
 ```
 
-4. Fill in only "What" and "Tests". Leave every "How I used Claude Code" line as `TODO (João)`: that section is my own account of the work and must not be written or guessed by you.
+4. Fill in only "What" and "Tests". Leave every "How I used Claude Code" line as `TODO (Lino)`: that section is my own account of the work and must not be written or guessed by you.
 5. Tell me the file is ready. I open the PR myself with `gh pr create --body-file .pr-description.md`.
