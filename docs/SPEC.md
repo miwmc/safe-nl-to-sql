@@ -37,7 +37,7 @@ A rejected query returns 200 with `rejected: true`, a `reason` and empty `rows`.
 
 ## SqlGuard rules
 Parse with ScriptDom (TSql160Parser). Regex is not enough. Reject when:
-1. The SQL does not parse.
+1. The SQL does not parse (a parser exception counts as not parseable), or it is longer than 2000 characters. The length is checked before parsing, which bounds nesting depth.
 2. There is not exactly one statement (zero statements, such as empty or comment-only input, is rejected as well as more than one).
 3. The statement is not a SELECT (INSERT, UPDATE, DELETE, MERGE, DROP, EXEC, etc.).
 4. It references any table other than dbo.Certificates (including joins, subqueries, CTEs over other tables, system views like sys.tables or INFORMATION_SCHEMA).
