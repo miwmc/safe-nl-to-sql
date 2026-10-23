@@ -88,4 +88,47 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.NoStatement, result.Reason);
     }
+
+    // Rule 3: the statement must be a SELECT.
+
+    [Theory]
+    [InlineData("select top 10 equipmentname from dbo.certificates")]
+    [InlineData("SELECT TOP 10 [EquipmentName] FROM [dbo].[Certificates]")]
+    // Tricky: starts with WITH but the statement is a SELECT.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c")]
+    // Tricky: UNION is still a SELECT statement.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 Metric FROM dbo.Certificates")]
+    public void Rule3_Select_statement_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    [InlineData("INSERT INTO dbo.Certificates (EquipmentName) VALUES ('x')")]
+    [InlineData("UPDATE dbo.Certificates SET IsCompliant = 1")]
+    [InlineData("DELETE FROM dbo.Certificates")]
+    [InlineData("MERGE dbo.Certificates AS t USING dbo.Certificates AS s ON t.Id = s.Id WHEN MATCHED THEN DELETE;")]
+    [InlineData("DROP TABLE dbo.Certificates")]
+    [InlineData("TRUNCATE TABLE dbo.Certificates")]
+    [InlineData("EXEC sp_who")]
+    [InlineData("DECLARE @x int")]
+    [InlineData("SET NOCOUNT ON")]
+    // Tricky: starts with WITH but the statement is a DELETE.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) DELETE FROM c")]
+    // Tricky: a leading comment containing SELECT must not make it look like a SELECT.
+    [InlineData("/* SELECT */ DELETE FROM dbo.Certificates")]
+    // Tricky: a SELECT nested in a block is not a top-level SelectStatement.
+    [InlineData("BEGIN SELECT TOP 10 EquipmentName FROM dbo.Certificates END")]
+    // Tricky: a destructive statement nested in a conditional.
+    [InlineData("IF 1=1 DELETE FROM dbo.Certificates")]
+    public void Rule3_Non_select_statement_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.NotSelect, result.Reason);
+    }
 }
