@@ -1,9 +1,10 @@
 {
+  "model": "opusplan",
+  "effortLevel": "medium",
   "permissions": {
     "allow": [
       "Bash(dotnet build *)",
       "Bash(dotnet build)",
-      "Bash(dotnet test *)",
       "Bash(dotnet test)",
       "Bash(dotnet restore *)",
       "Bash(dotnet restore)",
@@ -21,7 +22,6 @@
       "Read(./.env)"
     ]
   },
-  "model": "opusplan",
   "hooks": {
     "PreToolUse": [
       {
@@ -34,9 +34,5 @@
         ]
       }
     ]
-  },
-  "effortLevel": "medium",
-  "enabledPlugins": {
-    "csharp-lsp@claude-plugins-official": true
   }
 }
