@@ -9,7 +9,7 @@ pattern='^dotnet test( [^;&|<>`$#\\[:cntrl:]]*)?$'
 if [[ "$cmd" =~ $pattern ]]; then
   filtered_cmd="set -o pipefail; $cmd 2>&1 | grep -iE -A 8 '(^\s*failed |\[fail\]|error [A-Z]+[0-9]+|build failed|failed!|passed!|total tests|test run summary|^\s*(total|failed|succeeded|skipped):)' | head -150"
   echo "$input" | jq --arg filtered "$filtered_cmd" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", updatedInput: (.tool_input + {command: $filtered})}}'
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "plain dotnet test, output filtered by hook", updatedInput: (.tool_input + {command: $filtered})}}'
 else
   echo "{}"
 fi
