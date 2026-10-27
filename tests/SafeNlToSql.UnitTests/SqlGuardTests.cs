@@ -273,4 +273,97 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
     }
+
+    // Rule 5: only allowlisted columns may be referenced, anywhere. SELECT * is rejected.
+    // The allowlist is case-insensitive. A column reference must be an allowlisted name itself:
+    // references to aliases are rejected, output aliases (AS x) are fine.
+    // Accepted cases already satisfy the other rules (dbo.Certificates, TOP <= 100, allowlisted functions).
+
+    [Theory]
+    [InlineData("SELECT TOP 10 CertificateNumber, EquipmentName, EquipmentType, Metric, CalibrationDate, IsCompliant FROM dbo.Certificates")]
+    // Casing and brackets.
+    [InlineData("SELECT TOP 10 EQUIPMENTNAME, [metric], iscompliant FROM dbo.Certificates")]
+    // Qualified by alias, by table, by schema and table.
+    [InlineData("SELECT TOP 10 c.EquipmentName FROM dbo.Certificates c WHERE c.IsCompliant = 0 ORDER BY c.CalibrationDate")]
+    [InlineData("SELECT TOP 10 dbo.Certificates.EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentType, COUNT(*) FROM dbo.Certificates GROUP BY EquipmentType HAVING COUNT(*) > 1")]
+    [InlineData("SELECT TOP 10 EquipmentName AS Name FROM dbo.Certificates")]
+    // Tricky: COUNT(*) is not SELECT *.
+    [InlineData("SELECT TOP 1 COUNT(*) FROM dbo.Certificates")]
+    // Tricky: the multiplication operator is not a star expression.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE 2 * 3 = 6")]
+    // Tricky: a forbidden name in a string literal or a comment is not a column reference.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentName = 'ClientName'")]
+    [InlineData("SELECT TOP 10 EquipmentName /* ClientName */ FROM dbo.Certificates -- ClientName")]
+    // Tricky: an output alias may have any name, it is not a column reference.
+    [InlineData("SELECT TOP 10 EquipmentName AS ClientName FROM dbo.Certificates")]
+    public void Rule5_Allowed_columns_are_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    // ClientName in every spelling.
+    [InlineData("SELECT TOP 10 ClientName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 [ClientName] FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 [clientname] FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 CLIENTNAME FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 c.ClientName FROM dbo.Certificates c")]
+    [InlineData("SELECT TOP 10 dbo.Certificates.ClientName FROM dbo.Certificates")]
+    // ClientName in every clause, not just the select list.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE ClientName = 'Acme'")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY ClientName")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates GROUP BY EquipmentName, ClientName")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates GROUP BY EquipmentName HAVING MAX(ClientName) = 'Acme'")]
+    [InlineData("SELECT TOP 10 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.ClientName = b.ClientName")]
+    [InlineData("SELECT TOP 1 COUNT(ClientName) FROM dbo.Certificates")]
+    // ClientName inside subqueries, derived tables and UNION branches.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT ClientName FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EXISTS (SELECT 1 FROM dbo.Certificates x WHERE x.ClientName = 'Acme')")]
+    [InlineData("SELECT TOP 10 d.ClientName FROM (SELECT ClientName FROM dbo.Certificates) AS d")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 ClientName FROM dbo.Certificates")]
+    // Columns outside the allowlist that are not secret are still rejected.
+    [InlineData("SELECT TOP 10 Id FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY Id")]
+    [InlineData("SELECT TOP 10 NoSuchColumn FROM dbo.Certificates")]
+    // Pseudo-columns expose Id and other hidden data.
+    [InlineData("SELECT TOP 10 $IDENTITY FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 $ROWGUID FROM dbo.Certificates")]
+    // Tricky: ClientName aliased to an allowed name inside a CTE. The reference inside the CTE is what is caught.
+    [InlineData("WITH c AS (SELECT ClientName AS EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c")]
+    // Strict on aliases: a reference to an output alias is not an allowlisted name.
+    [InlineData("SELECT TOP 10 EquipmentName AS Name FROM dbo.Certificates ORDER BY Name")]
+    [InlineData("SELECT TOP 10 d.Name FROM (SELECT EquipmentName AS Name FROM dbo.Certificates) AS d")]
+    [InlineData("WITH c (Name) AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 Name FROM c")]
+    // Tricky: an alias named ClientName is still not a column the caller may reference.
+    [InlineData("SELECT TOP 10 EquipmentName AS ClientName FROM dbo.Certificates ORDER BY ClientName")]
+    public void Rule5_Other_columns_are_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.ColumnNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 * FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 c.* FROM dbo.Certificates c")]
+    [InlineData("SELECT TOP 10 dbo.Certificates.* FROM dbo.Certificates")]
+    // Tricky: star inside a subquery, even where it is harmless in SQL Server (EXISTS).
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EXISTS (SELECT * FROM dbo.Certificates)")]
+    // Tricky: star inside a derived table or CTE still returns ClientName to the outer query.
+    [InlineData("SELECT TOP 10 d.EquipmentName FROM (SELECT * FROM dbo.Certificates) AS d")]
+    [InlineData("WITH c AS (SELECT * FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c")]
+    // Tricky: star in the second UNION branch.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 * FROM dbo.Certificates")]
+    public void Rule5_Select_star_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.SelectStarNotAllowed, result.Reason);
+    }
 }

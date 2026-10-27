@@ -76,6 +76,12 @@ public sealed class SqlGuard
             return GuardResult.Reject(SqlGuardReasons.TableNotAllowed);
         }
 
+        var columnViolation = ColumnReferenceChecker.FindViolation(select);
+        if (columnViolation is not null)
+        {
+            return GuardResult.Reject(columnViolation);
+        }
+
         return GuardResult.Allow();
     }
 }
