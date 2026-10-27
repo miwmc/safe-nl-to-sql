@@ -87,6 +87,12 @@ public sealed class SqlGuard
             return GuardResult.Reject(SqlGuardReasons.DateFilterNotAllowed);
         }
 
+        var constructViolation = ForbiddenConstructChecker.FindViolation(select);
+        if (constructViolation is not null)
+        {
+            return GuardResult.Reject(constructViolation);
+        }
+
         return GuardResult.Allow();
     }
 }

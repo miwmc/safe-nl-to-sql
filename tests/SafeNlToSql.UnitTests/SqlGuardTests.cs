@@ -447,4 +447,180 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.DateFilterNotAllowed, result.Reason);
     }
+
+    // Rule 7: no SELECT INTO, no FOR clause, no OPTION hint, and only allowlisted functions.
+    // Function allowlist (case-insensitive): COUNT, MIN, MAX, GETDATE, SYSDATETIME, DATEADD, DATEDIFF, YEAR, MONTH,
+    // DAY, LOWER, UPPER, CAST, CONVERT, TRY_CAST, TRY_CONVERT and CURRENT_TIMESTAMP. Everything function-like
+    // that is not on it is rejected: schema-qualified calls, @@ globals, anything with an OVER clause.
+    // Checked at every depth. Accepted cases already satisfy the other rules.
+
+    [Theory]
+    [InlineData("SELECT TOP 10 UPPER(EquipmentName), LOWER(EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentType, COUNT(*), MIN(CalibrationDate), MAX(CalibrationDate) FROM dbo.Certificates GROUP BY EquipmentType")]
+    [InlineData("SELECT TOP 1 COUNT(DISTINCT EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 CAST(IsCompliant AS int), TRY_CAST(IsCompliant AS int), TRY_CONVERT(int, IsCompliant), CONVERT(varchar(10), CalibrationDate, 23) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 YEAR(CalibrationDate), MONTH(CalibrationDate), DAY(CalibrationDate) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE CalibrationDate >= DATEADD(day, -30, GETDATE()) AND CalibrationDate < SYSDATETIME() AND DATEDIFF(day, CalibrationDate, CURRENT_TIMESTAMP) > 1")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE LOWER(EquipmentType) = 'fridge'")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY UPPER(EquipmentName)")]
+    // Tricky: function names are case-insensitive.
+    [InlineData("select top 10 upper(equipmentname) from dbo.certificates")]
+    [InlineData("SELECT TOP 1 Count(*) FROM dbo.Certificates")]
+    // Tricky: allowed functions at depth.
+    [InlineData("SELECT TOP 10 UPPER(EquipmentName) FROM dbo.Certificates UNION SELECT TOP 10 LOWER(EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT LOWER(EquipmentType) FROM dbo.Certificates)")]
+    // Tricky: forbidden names in a string literal or a comment are not function calls or clauses.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentName = 'DB_NAME() FOR XML OPTION (RECOMPILE) INTO #t' -- LEN(x) OPTION (MAXDOP 1)")]
+    public void Rule7_Allowed_functions_are_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    // CASE, COALESCE and NULLIF are expressions, not function calls, and read nothing new.
+    [Theory]
+    [InlineData("SELECT TOP 10 CASE WHEN IsCompliant = 1 THEN 'yes' ELSE 'no' END FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 COALESCE(Metric, EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 NULLIF(Metric, EquipmentType) FROM dbo.Certificates")]
+    public void Rule7_Expressions_that_are_not_function_calls_are_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    // Functions that are not on the allowlist.
+    [InlineData("SELECT TOP 10 LEN(EquipmentName) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 SUBSTRING(EquipmentName, 1, 3) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 CONCAT(EquipmentName, EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 ISNULL(Metric, 'x') FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 STRING_AGG(EquipmentName, ',') FROM dbo.Certificates")]
+    // System information.
+    [InlineData("SELECT TOP 10 DB_NAME() FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 SERVERPROPERTY('ProductVersion') FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 SUSER_SNAME() FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 CURRENT_USER FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 SYSTEM_USER FROM dbo.Certificates")]
+    // Function-like syntax that is not a plain FunctionCall node.
+    [InlineData("SELECT TOP 10 LEFT(EquipmentName, 3) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 IIF(IsCompliant = 1, 'yes', 'no') FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 PARSE(CertificateNumber AS int) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 {fn UCASE(EquipmentName)} FROM dbo.Certificates")]
+    // NEXT VALUE FOR advances a sequence, which is a write.
+    [InlineData("SELECT TOP 10 NEXT VALUE FOR dbo.CertSeq FROM dbo.Certificates")]
+    // Schema-qualified calls, even when the function name is on the allowlist.
+    [InlineData("SELECT TOP 10 dbo.GETDATE() FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 [dbo].[GETDATE]() FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 master.dbo.GETDATE() FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 sys.fn_varbintohexstr(0x00) FROM dbo.Certificates")]
+    // @@ global variables.
+    [InlineData("SELECT TOP 10 @@VERSION FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentName = @@SERVERNAME")]
+    // OVER clause, even on allowlisted aggregates.
+    [InlineData("SELECT TOP 10 COUNT(*) OVER () FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 MIN(CalibrationDate) OVER (PARTITION BY EquipmentType) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 ROW_NUMBER() OVER (ORDER BY CalibrationDate) FROM dbo.Certificates")]
+    // Every clause.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE LEN(EquipmentName) > 3")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY LEN(EquipmentName)")]
+    [InlineData("SELECT TOP 10 EquipmentType FROM dbo.Certificates GROUP BY EquipmentType HAVING LEN(EquipmentType) > 3")]
+    [InlineData("SELECT TOP 10 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON LEN(a.EquipmentName) = LEN(b.EquipmentName)")]
+    // Every depth: subquery, scalar subquery, derived table, CTE, UNION branch.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT LEN(EquipmentType) FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 10 (SELECT TOP 1 LEN(EquipmentName) FROM dbo.Certificates) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 d.EquipmentName FROM (SELECT EquipmentName FROM dbo.Certificates WHERE LEN(EquipmentName) > 3) AS d")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates WHERE LEN(EquipmentName) > 3) SELECT TOP 10 EquipmentName FROM c")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE LEN(EquipmentName) > 3")]
+    // Tricky: a forbidden function nested inside an allowed one.
+    [InlineData("SELECT TOP 10 UPPER(REPLACE(EquipmentName, 'a', 'b')) FROM dbo.Certificates")]
+    // Tricky: casing and brackets do not change the function name.
+    [InlineData("SELECT TOP 10 len(EquipmentName) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 [LEN](EquipmentName) FROM dbo.Certificates")]
+    // Tricky: a name that starts with an allowed one is a different function.
+    [InlineData("SELECT TOP 1 COUNT_BIG(*) FROM dbo.Certificates")]
+    public void Rule7_Other_functions_are_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.FunctionNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName INTO #t FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName INTO ##t FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName INTO dbo.Copy FROM dbo.Certificates")]
+    // Tricky: INTO in the first branch of a UNION, and after a CTE.
+    [InlineData("SELECT TOP 10 EquipmentName INTO #t FROM dbo.Certificates UNION SELECT TOP 10 EquipmentName FROM dbo.Certificates")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName INTO #t FROM c")]
+    public void Rule7_Select_into_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.SelectIntoNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates FOR XML AUTO")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates FOR XML PATH('')")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates FOR JSON AUTO")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates FOR JSON PATH")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates FOR BROWSE")]
+    // Tricky: after ORDER BY.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY EquipmentName FOR JSON AUTO")]
+    // Tricky: at depth, in a scalar subquery and in a CTE.
+    [InlineData("SELECT TOP 10 (SELECT TOP 1 EquipmentName FROM dbo.Certificates FOR XML PATH('')) FROM dbo.Certificates")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates FOR XML PATH('')) SELECT TOP 10 EquipmentName FROM c")]
+    // Tricky: on the last branch of a UNION.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentType FROM dbo.Certificates FOR XML AUTO")]
+    public void Rule7_For_clause_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.ForClauseNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (MAXDOP 1)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (RECOMPILE)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (MAXRECURSION 0)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (HASH JOIN)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (OPTIMIZE FOR UNKNOWN)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates OPTION (LABEL = 'x')")]
+    // Tricky: after ORDER BY, after a CTE, after a UNION.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY EquipmentName OPTION (RECOMPILE)")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c OPTION (RECOMPILE)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentType FROM dbo.Certificates OPTION (RECOMPILE)")]
+    // Table hints are rejected too, whatever the hint.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WITH (NOLOCK)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WITH (UPDLOCK, HOLDLOCK)")]
+    // Tricky: an index hint on one side of a JOIN.
+    [InlineData("SELECT TOP 10 a.EquipmentName FROM dbo.Certificates a WITH (INDEX(0)) JOIN dbo.Certificates b ON a.CertificateNumber = b.CertificateNumber")]
+    // Tricky: a table hint inside a subquery.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates WITH (NOLOCK))")]
+    public void Rule7_Query_hint_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.QueryHintNotAllowed, result.Reason);
+    }
+
+    // OPENROWSET and OPENQUERY are table sources, so rule 4 rejects them before rule 7 runs.
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName FROM OPENROWSET('SQLNCLI', 'Server=x;Trusted_Connection=yes;', 'SELECT 1')")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM OPENQUERY(linked, 'SELECT 1')")]
+    public void Rule7_Openrowset_and_openquery_stay_table_not_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
+    }
 }
