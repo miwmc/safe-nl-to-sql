@@ -82,6 +82,11 @@ public sealed class SqlGuard
             return GuardResult.Reject(columnViolation);
         }
 
+        if (!DateFilterChecker.IsAllowed(select))
+        {
+            return GuardResult.Reject(SqlGuardReasons.DateFilterNotAllowed);
+        }
+
         return GuardResult.Allow();
     }
 }

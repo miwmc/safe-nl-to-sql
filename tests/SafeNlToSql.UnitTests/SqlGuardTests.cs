@@ -366,4 +366,85 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.SelectStarNotAllowed, result.Reason);
     }
+
+    // Rule 6: date filters only on CalibrationDate.
+    // A date-valued expression is a date function (GETDATE, DATEADD, YEAR, ...), CURRENT_TIMESTAMP or a
+    // CAST/CONVERT to a date type. Two things are enforced:
+    //  - a column inside a date-valued expression must be CalibrationDate;
+    //  - a comparison, BETWEEN, IN or LIKE that contains a date-valued expression may only involve CalibrationDate.
+    // A text column compared with a date-like string is not a date filter, so it stays allowed.
+    // CalibrationDate is the only date column, so this mostly guards against nonsense comparisons.
+    // Accepted cases already satisfy the other rules (dbo.Certificates, allowlisted columns, TOP <= 100, allowlisted functions).
+
+    private const string DatePrefix = "SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE ";
+
+    [Theory]
+    [InlineData(DatePrefix + "CalibrationDate >= DATEADD(day, -30, GETDATE())")]
+    [InlineData(DatePrefix + "CalibrationDate > CURRENT_TIMESTAMP")]
+    [InlineData(DatePrefix + "CalibrationDate < SYSDATETIME()")]
+    [InlineData(DatePrefix + "CAST(CalibrationDate AS date) = CAST(GETDATE() AS date)")]
+    [InlineData(DatePrefix + "CONVERT(date, CalibrationDate) < GETDATE()")]
+    [InlineData(DatePrefix + "CalibrationDate BETWEEN DATEADD(month, -6, GETDATE()) AND GETDATE()")]
+    [InlineData(DatePrefix + "YEAR(CalibrationDate) = 2024")]
+    [InlineData(DatePrefix + "DATEDIFF(day, CalibrationDate, GETDATE()) < 30")]
+    [InlineData(DatePrefix + "CalibrationDate = '2024-05-01'")]
+    [InlineData("SELECT TOP 10 YEAR(CalibrationDate) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 DATEADD(day, 1, CalibrationDate) FROM dbo.Certificates")]
+    // Tricky: a text column compared with a date-like string is not a date filter.
+    [InlineData(DatePrefix + "CertificateNumber = '2024-05-01'")]
+    [InlineData(DatePrefix + "CertificateNumber LIKE '2024-%'")]
+    // Tricky: other predicates in the same WHERE are checked on their own, not as part of the date comparison.
+    [InlineData(DatePrefix + "EquipmentType = 'Fridge' AND CalibrationDate >= DATEADD(day, -30, GETDATE())")]
+    [InlineData(DatePrefix + "IsCompliant = 1 AND CalibrationDate < SYSDATETIME()")]
+    // Tricky: CONVERT to a text type is not date-valued, so the text comparison is not a date filter.
+    [InlineData(DatePrefix + "CertificateNumber = CONVERT(varchar(10), CalibrationDate, 23)")]
+    // Tricky: a date comparison inside a subquery does not drag the outer IN column into the check.
+    [InlineData(DatePrefix + "EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates WHERE CalibrationDate > GETDATE())")]
+    public void Rule6_Date_filter_on_calibration_date_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    // A date function on another column, in any clause.
+    [InlineData("SELECT TOP 10 YEAR(EquipmentName) FROM dbo.Certificates")]
+    [InlineData(DatePrefix + "MONTH(Metric) = 1")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY DAY(CertificateNumber)")]
+    [InlineData(DatePrefix + "DATEDIFF(day, EquipmentName, GETDATE()) < 30")]
+    [InlineData("SELECT TOP 10 DATEADD(day, 1, EquipmentName) FROM dbo.Certificates")]
+    // CAST and CONVERT to a date type on another column.
+    [InlineData(DatePrefix + "CAST(CertificateNumber AS date) > GETDATE()")]
+    [InlineData(DatePrefix + "CONVERT(date, EquipmentName) > GETDATE()")]
+    [InlineData(DatePrefix + "TRY_CAST(CertificateNumber AS date) > GETDATE()")]
+    [InlineData(DatePrefix + "CAST(Metric AS datetime2(3)) < GETDATE()")]
+    // A date-valued expression compared with another column.
+    [InlineData(DatePrefix + "EquipmentName = GETDATE()")]
+    [InlineData(DatePrefix + "EquipmentType > DATEADD(year, -1, GETDATE())")]
+    [InlineData(DatePrefix + "Metric = CURRENT_TIMESTAMP")]
+    [InlineData(DatePrefix + "EquipmentName BETWEEN GETDATE() AND DATEADD(year, 1, GETDATE())")]
+    [InlineData(DatePrefix + "CertificateNumber IN (GETDATE(), CURRENT_TIMESTAMP)")]
+    [InlineData(DatePrefix + "YEAR(CalibrationDate) = CertificateNumber")]
+    // LIKE counts as a comparison.
+    [InlineData(DatePrefix + "EquipmentName LIKE GETDATE()")]
+    [InlineData(DatePrefix + "CAST(CalibrationDate AS date) LIKE EquipmentName")]
+    // Tricky: the wrong column is nested inside a comparison that also uses CalibrationDate.
+    [InlineData(DatePrefix + "CalibrationDate = DATEADD(day, 1, EquipmentName)")]
+    // Tricky: an aggregate over another column compared with a date.
+    [InlineData("SELECT TOP 10 EquipmentType FROM dbo.Certificates GROUP BY EquipmentType HAVING MIN(EquipmentName) = GETDATE()")]
+    // Tricky: function names are case-insensitive.
+    [InlineData(DatePrefix + "EquipmentName = getdate()")]
+    // Tricky: the same violation inside a subquery, a CTE and a UNION branch.
+    [InlineData(DatePrefix + "EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates WHERE EquipmentName = GETDATE())")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates WHERE EquipmentName > GETDATE()) SELECT TOP 10 EquipmentName FROM c")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentName = GETDATE()")]
+    public void Rule6_Date_filter_on_other_columns_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.DateFilterNotAllowed, result.Reason);
+    }
 }
