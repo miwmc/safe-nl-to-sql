@@ -6,26 +6,44 @@ namespace SafeNlToSql.Application;
 
 /// <summary>
 /// Rule 8: the outer query, and each branch of a UNION/EXCEPT/INTERSECT, must have TOP with an integer literal
-/// from 0 to 100, plain or in parentheses. TOP is never added automatically. Subqueries, derived tables and
+/// from 0 to 100, plain or in parentheses, and the values of all those branches add up to at most 100, so a
+/// UNION cannot multiply the cap. TOP is never added automatically. Subqueries, derived tables and
 /// CTE bodies are not checked: only the query that returns the rows is bounded.
 /// </summary>
 internal static class TopLimitChecker
 {
     private const int MaxTop = 100;
 
-    /// <returns>The rejection reason, or null when every outer branch has an allowed TOP.</returns>
-    public static string? FindViolation(SelectStatement select) => Check(select.QueryExpression);
-
-    private static string? Check(QueryExpression query) => query switch
+    /// <returns>The rejection reason, or null when every outer branch has an allowed TOP and they add up to at most 100.</returns>
+    public static string? FindViolation(SelectStatement select)
     {
-        QuerySpecification spec => CheckTop(spec.TopRowFilter),
-        BinaryQueryExpression binary => Check(binary.FirstQueryExpression) ?? Check(binary.SecondQueryExpression),
-        QueryParenthesisExpression parenthesis => Check(parenthesis.QueryExpression),
-        // A query expression kind we do not know fails closed.
-        _ => SqlGuardReasons.TopMissing,
-    };
+        var total = BigInteger.Zero;
+        var violation = Check(select.QueryExpression, ref total);
+        if (violation is not null)
+        {
+            return violation;
+        }
 
-    private static string? CheckTop(TopRowFilter? top)
+        return total <= MaxTop ? null : SqlGuardReasons.TopTooLarge;
+    }
+
+    private static string? Check(QueryExpression query, ref BigInteger total)
+    {
+        switch (query)
+        {
+            case QuerySpecification spec:
+                return CheckTop(spec.TopRowFilter, ref total);
+            case BinaryQueryExpression binary:
+                return Check(binary.FirstQueryExpression, ref total) ?? Check(binary.SecondQueryExpression, ref total);
+            case QueryParenthesisExpression parenthesis:
+                return Check(parenthesis.QueryExpression, ref total);
+            // A query expression kind we do not know fails closed.
+            default:
+                return SqlGuardReasons.TopMissing;
+        }
+    }
+
+    private static string? CheckTop(TopRowFilter? top, ref BigInteger total)
     {
         // PERCENT and WITH TIES can return more rows than the number says, so they do not count as a bound.
         if (top is null || top.Percent || top.WithTies)
@@ -54,6 +72,7 @@ internal static class TopLimitChecker
             return SqlGuardReasons.TopMissing;
         }
 
+        total += value;
         return value <= MaxTop ? null : SqlGuardReasons.TopTooLarge;
     }
 }

@@ -30,14 +30,32 @@ internal static class ColumnReferenceChecker
 
     private sealed class ColumnVisitor : TSqlFragmentVisitor
     {
+        // The * nodes that are the sole, unqualified argument of a COUNT call.
+        private readonly HashSet<ColumnReferenceExpression> _countStars = [];
+
         public string? Reason { get; private set; }
+
+        // Visited before the call's parameters, so the * is registered before its own Visit.
+        public override void Visit(FunctionCall node)
+        {
+            if (string.Equals(node.FunctionName?.Value, "COUNT", StringComparison.OrdinalIgnoreCase)
+                && node.Parameters is [ColumnReferenceExpression { ColumnType: ColumnType.Wildcard, MultiPartIdentifier: null or { Count: 0 } } star])
+            {
+                _countStars.Add(star);
+            }
+        }
 
         public override void Visit(ColumnReferenceExpression node)
         {
             switch (node.ColumnType)
             {
-                // The * in COUNT(*). It is not SELECT *; rule 7 restricts which functions may take it.
+                // COUNT(*) returns no column data. A * anywhere else is rejected like SELECT *.
                 case ColumnType.Wildcard:
+                    if (!_countStars.Contains(node))
+                    {
+                        Reason ??= SqlGuardReasons.SelectStarNotAllowed;
+                    }
+
                     break;
                 // Only the last part counts, so c.EquipmentName and dbo.Certificates.EquipmentName both resolve to EquipmentName.
                 case ColumnType.Regular

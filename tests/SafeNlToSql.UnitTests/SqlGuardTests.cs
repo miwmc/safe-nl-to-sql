@@ -259,6 +259,87 @@ public class SqlGuardTests
         Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
     }
 
+    // Rule 4: a CTE named Certificates whose body reads Certificates unqualified references itself.
+    // SQL Server treats that as a recursive CTE, not as the table, so the guard rejects it.
+
+    [Theory]
+    [InlineData("WITH Certificates AS (SELECT TOP 5 EquipmentName FROM Certificates) SELECT TOP 5 EquipmentName FROM Certificates")]
+    // Tricky: casing and brackets do not change the name.
+    [InlineData("WITH certificates AS (SELECT TOP 5 EquipmentName FROM CERTIFICATES) SELECT TOP 5 EquipmentName FROM certificates")]
+    [InlineData("WITH [Certificates] AS (SELECT TOP 5 EquipmentName FROM [Certificates]) SELECT TOP 5 EquipmentName FROM [Certificates]")]
+    // Tricky: the self-reference is nested in a subquery, a join or a UNION branch of the CTE body.
+    [InlineData("WITH Certificates AS (SELECT TOP 5 EquipmentName FROM dbo.Certificates WHERE EquipmentName IN (SELECT EquipmentName FROM Certificates)) SELECT TOP 5 EquipmentName FROM Certificates")]
+    [InlineData("WITH Certificates AS (SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN Certificates b ON a.EquipmentName = b.EquipmentName) SELECT TOP 5 EquipmentName FROM Certificates")]
+    [InlineData("WITH Certificates AS (SELECT TOP 5 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 5 EquipmentName FROM Certificates) SELECT TOP 5 EquipmentName FROM Certificates")]
+    // Tricky: the second CTE of two is the one that references itself.
+    [InlineData("WITH a AS (SELECT TOP 5 EquipmentName FROM dbo.Certificates), Certificates AS (SELECT TOP 5 EquipmentName FROM Certificates) SELECT TOP 5 EquipmentName FROM a")]
+    public void Rule4_Cte_named_certificates_referencing_itself_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    // The schema-qualified name in the body is the real table, so there is no self-reference.
+    [InlineData("WITH Certificates AS (SELECT TOP 5 EquipmentName FROM dbo.Certificates) SELECT TOP 5 EquipmentName FROM Certificates")]
+    // Tricky: a CTE with another name may read Certificates unqualified (it is the real table here).
+    [InlineData("WITH c AS (SELECT TOP 5 EquipmentName FROM Certificates) SELECT TOP 5 EquipmentName FROM c")]
+    public void Rule4_Cte_reading_the_real_table_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    // Rule 4: at most 2 references to dbo.Certificates in the whole query, at every depth. This bounds self-joins
+    // and cross joins. A CTE counts once per use, as SQL Server expands its body at every use site.
+
+    [Theory]
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.EquipmentName = b.EquipmentName JOIN dbo.Certificates c ON b.EquipmentName = c.EquipmentName")]
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a CROSS JOIN dbo.Certificates b CROSS JOIN dbo.Certificates c")]
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a, dbo.Certificates b, dbo.Certificates c")]
+    // Every depth: the third reference is in a subquery, a derived table, a scalar subquery or a UNION branch.
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.EquipmentName = b.EquipmentName WHERE a.EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN (SELECT EquipmentName FROM dbo.Certificates) b ON a.EquipmentName = b.EquipmentName WHERE EXISTS (SELECT EquipmentType FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 5 (SELECT TOP 1 EquipmentName FROM dbo.Certificates), (SELECT TOP 1 EquipmentType FROM dbo.Certificates) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 5 EquipmentName FROM dbo.Certificates UNION SELECT TOP 5 EquipmentName FROM dbo.Certificates UNION SELECT TOP 5 EquipmentName FROM dbo.Certificates")]
+    // Tricky: schema, brackets and casing do not hide a reference.
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a, Certificates b, [DBO].[CERTIFICATES] c")]
+    // Tricky: the CTE body counts, and so does the outer join.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.EquipmentName = b.EquipmentName JOIN c ON c.EquipmentName = a.EquipmentName")]
+    // Tricky: one CTE used three times is three expansions of its body.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 5 x.EquipmentName FROM c x CROSS JOIN c y CROSS JOIN c z")]
+    // Tricky: a CTE built on another CTE; the inner body is expanded at every use of the outer one.
+    [InlineData("WITH a AS (SELECT EquipmentName FROM dbo.Certificates), b AS (SELECT x.EquipmentName FROM a x CROSS JOIN a y) SELECT TOP 5 p.EquipmentName FROM b p CROSS JOIN b q")]
+    public void Rule4_More_than_two_references_are_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TooManyTableReferences, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.EquipmentName = b.EquipmentName")]
+    [InlineData("SELECT TOP 5 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 5 EquipmentName FROM dbo.Certificates UNION SELECT TOP 5 EquipmentName FROM dbo.Certificates")]
+    // Tricky: a CTE used once is one expansion; defining it does not add a second reference by itself.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 5 EquipmentName FROM c")]
+    // Tricky: a CTE used twice is two expansions.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 5 x.EquipmentName FROM c x CROSS JOIN c y")]
+    // Tricky: an unused CTE is never expanded.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 5 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.EquipmentName = b.EquipmentName")]
+    public void Rule4_Up_to_two_references_are_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
     // Rule 4: the outer query must read from dbo.Certificates, so a query without FROM is rejected.
 
     [Theory]
@@ -365,6 +446,43 @@ public class SqlGuardTests
 
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.SelectStarNotAllowed, result.Reason);
+    }
+
+    // The * is only allowed as the argument of COUNT. Any other function taking * is rejected by the guard itself,
+    // not left to the parser.
+    [Theory]
+    [InlineData("SELECT TOP 10 MIN(*) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 MAX(*) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 LOWER(*) FROM dbo.Certificates")]
+    // Tricky: casing and a subquery do not change which function the * belongs to.
+    [InlineData("SELECT TOP 10 max(*) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE CalibrationDate = (SELECT TOP 1 MAX(*) FROM dbo.Certificates)")]
+    // Tricky: COUNT(*) next to a bad function in the same query.
+    [InlineData("SELECT TOP 10 COUNT(*), MIN(*) FROM dbo.Certificates")]
+    // Tricky: a star nested inside COUNT's argument is not COUNT(*).
+    [InlineData("SELECT TOP 10 COUNT(MAX(*)) FROM dbo.Certificates")]
+    // Tricky: a name that starts with COUNT is a different function, so its * is not COUNT(*).
+    [InlineData("SELECT TOP 1 COUNT_BIG(*) FROM dbo.Certificates")]
+    public void Rule5_Star_outside_count_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.SelectStarNotAllowed, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 COUNT(*) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 count(*) FROM dbo.Certificates")]
+    // Tricky: COUNT(*) at depth and in HAVING.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE (SELECT COUNT(*) FROM dbo.Certificates) > 1")]
+    [InlineData("SELECT TOP 10 EquipmentType FROM dbo.Certificates GROUP BY EquipmentType HAVING COUNT(*) > 1")]
+    public void Rule5_Count_star_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
     }
 
     // Rule 6: date filters only on CalibrationDate.
@@ -541,7 +659,7 @@ public class SqlGuardTests
     [InlineData("SELECT TOP 10 len(EquipmentName) FROM dbo.Certificates")]
     [InlineData("SELECT TOP 10 [LEN](EquipmentName) FROM dbo.Certificates")]
     // Tricky: a name that starts with an allowed one is a different function.
-    [InlineData("SELECT TOP 1 COUNT_BIG(*) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 1 COUNT_BIG(EquipmentName) FROM dbo.Certificates")]
     public void Rule7_Other_functions_are_rejected(string sql)
     {
         var result = _guard.Validate(sql);
@@ -688,7 +806,7 @@ public class SqlGuardTests
     [InlineData("SELECT DISTINCT TOP 10 EquipmentName FROM dbo.Certificates")]
     [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY EquipmentName")]
     // Tricky: every branch has TOP.
-    [InlineData("SELECT TOP 100 EquipmentName FROM dbo.Certificates UNION SELECT TOP 100 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 50 EquipmentName FROM dbo.Certificates UNION SELECT TOP 50 EquipmentType FROM dbo.Certificates")]
     [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 10 EquipmentType FROM dbo.Certificates")]
     // Tricky: parenthesised queries.
     [InlineData("(SELECT TOP 10 EquipmentName FROM dbo.Certificates)")]
@@ -753,6 +871,39 @@ public class SqlGuardTests
 
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.TopTooLarge, result.Reason);
+    }
+
+    // The TOP values of all outer branches add up, so a UNION cannot multiply the cap.
+    [Theory]
+    [InlineData("SELECT TOP 60 EquipmentName FROM dbo.Certificates UNION SELECT TOP 60 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 100 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 1 EquipmentType FROM dbo.Certificates")]
+    // Tricky: no single branch is above 100, but together they are by one or two rows.
+    [InlineData("SELECT TOP 99 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 2 EquipmentType FROM dbo.Certificates")]
+    // Tricky: EXCEPT and INTERSECT branches count too.
+    [InlineData("SELECT TOP 51 EquipmentName FROM dbo.Certificates EXCEPT SELECT TOP 50 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 51 EquipmentName FROM dbo.Certificates INTERSECT SELECT TOP 50 EquipmentName FROM dbo.Certificates")]
+    // Tricky: parentheses around the queries and around the values.
+    [InlineData("(SELECT TOP (60) EquipmentName FROM dbo.Certificates) UNION ALL (SELECT TOP ((50)) EquipmentType FROM dbo.Certificates)")]
+    // Tricky: only the outer branches add up; the TOP-less subquery and CTE body in the branches do not matter.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 60 EquipmentName FROM c UNION ALL SELECT TOP 60 EquipmentName FROM c")]
+    public void Rule8_Top_sum_above_100_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TopTooLarge, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 50 EquipmentName FROM dbo.Certificates UNION SELECT TOP 50 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 100 EquipmentName FROM dbo.Certificates UNION SELECT TOP 0 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 99 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 1 EquipmentType FROM dbo.Certificates")]
+    public void Rule8_Top_sum_up_to_100_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
     }
 
     // TOP (@x): rule 7 runs before rule 8 and does not allow variables, so this is ExpressionNotAllowed, not TopMissing.
