@@ -17,4 +17,6 @@ public static class SqlGuardReasons
     public const string SelectIntoNotAllowed = "SELECT INTO is not allowed";
     public const string ForClauseNotAllowed = "FOR XML, FOR JSON and FOR BROWSE are not allowed";
     public const string QueryHintNotAllowed = "Query and table hints are not allowed";
+    public const string TopMissing = "The query must use TOP with a value of at most 100";
+    public const string TopTooLarge = "TOP may not be above 100";
 }

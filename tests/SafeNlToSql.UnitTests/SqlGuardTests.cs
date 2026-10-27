@@ -673,4 +673,95 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
     }
+
+    // Rule 8: the outer query, and each branch of a UNION/EXCEPT/INTERSECT, must have TOP with an integer
+    // literal from 0 to 100, plain or in parentheses. TOP is never added automatically.
+    // Subqueries, derived tables and CTE bodies do not need TOP. Accepted cases already satisfy the other rules.
+
+    [Theory]
+    [InlineData("SELECT TOP 100 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 0 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 1 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP (10) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP (100) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP ((10)) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT DISTINCT TOP 10 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates ORDER BY EquipmentName")]
+    // Tricky: every branch has TOP.
+    [InlineData("SELECT TOP 100 EquipmentName FROM dbo.Certificates UNION SELECT TOP 100 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION ALL SELECT TOP 10 EquipmentType FROM dbo.Certificates")]
+    // Tricky: parenthesised queries.
+    [InlineData("(SELECT TOP 10 EquipmentName FROM dbo.Certificates)")]
+    [InlineData("(SELECT TOP 10 EquipmentName FROM dbo.Certificates) UNION (SELECT TOP 10 EquipmentType FROM dbo.Certificates)")]
+    // Tricky: subqueries, derived tables and CTE bodies do not need TOP.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 10 d.EquipmentName FROM (SELECT EquipmentName FROM dbo.Certificates) AS d")]
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c")]
+    public void Rule8_Top_up_to_100_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT EquipmentName FROM dbo.Certificates")]
+    // PERCENT and WITH TIES can return more rows than the number says.
+    [InlineData("SELECT TOP 10 PERCENT EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 100 PERCENT EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 WITH TIES EquipmentName FROM dbo.Certificates ORDER BY EquipmentName")]
+    // A value that is not an integer literal cannot be bounded by the guard.
+    [InlineData("SELECT TOP (5 + 5) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP (SELECT 10) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP (-1) EquipmentName FROM dbo.Certificates")]
+    // OFFSET/FETCH limits the rows but is not TOP.
+    [InlineData("SELECT EquipmentName FROM dbo.Certificates ORDER BY EquipmentName OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY")]
+    // Tricky: one branch of a UNION, EXCEPT or parenthesised UNION has no TOP.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates EXCEPT SELECT EquipmentType FROM dbo.Certificates")]
+    [InlineData("(SELECT TOP 10 EquipmentName FROM dbo.Certificates) UNION (SELECT EquipmentType FROM dbo.Certificates)")]
+    // Tricky: a TOP in a CTE, a derived table or a subquery does not limit the outer query.
+    [InlineData("WITH c AS (SELECT TOP 10 EquipmentName FROM dbo.Certificates) SELECT EquipmentName FROM c")]
+    [InlineData("SELECT d.EquipmentName FROM (SELECT TOP 10 EquipmentName FROM dbo.Certificates) AS d")]
+    [InlineData("SELECT EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT TOP 10 EquipmentType FROM dbo.Certificates)")]
+    public void Rule8_Query_without_a_usable_top_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TopMissing, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 101 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 1000 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP (101) EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP ((101)) EquipmentName FROM dbo.Certificates")]
+    // Tricky: values that overflow an int must still be "too large", not an exception.
+    [InlineData("SELECT TOP 2147483648 EquipmentName FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 99999999999999999999 EquipmentName FROM dbo.Certificates")]
+    // Tricky: leading zeros, a naive string comparison would call this smaller than 100.
+    [InlineData("SELECT TOP 0101 EquipmentName FROM dbo.Certificates")]
+    // Tricky: one branch of a UNION is too large.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 101 EquipmentType FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 101 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentType FROM dbo.Certificates")]
+    public void Rule8_Top_above_100_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TopTooLarge, result.Reason);
+    }
+
+    // TOP (@x): rule 7 runs before rule 8 and does not allow variables, so this is ExpressionNotAllowed, not TopMissing.
+    [Fact]
+    public void Rule8_Top_with_a_variable_is_rejected_by_the_expression_allowlist()
+    {
+        var result = _guard.Validate("SELECT TOP (@x) EquipmentName FROM dbo.Certificates");
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.ExpressionNotAllowed, result.Reason);
+    }
 }

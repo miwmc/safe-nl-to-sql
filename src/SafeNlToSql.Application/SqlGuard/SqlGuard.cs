@@ -93,6 +93,12 @@ public sealed class SqlGuard
             return GuardResult.Reject(constructViolation);
         }
 
+        var topViolation = TopLimitChecker.FindViolation(select);
+        if (topViolation is not null)
+        {
+            return GuardResult.Reject(topViolation);
+        }
+
         return GuardResult.Allow();
     }
 }
