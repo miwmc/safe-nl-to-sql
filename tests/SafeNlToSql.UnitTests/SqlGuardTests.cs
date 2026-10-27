@@ -604,12 +604,62 @@ public class SqlGuardTests
     [InlineData("SELECT TOP 10 a.EquipmentName FROM dbo.Certificates a WITH (INDEX(0)) JOIN dbo.Certificates b ON a.CertificateNumber = b.CertificateNumber")]
     // Tricky: a table hint inside a subquery.
     [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates WITH (NOLOCK))")]
+    // Tricky: the old table hint syntax, without WITH.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates (NOLOCK)")]
     public void Rule7_Query_hint_is_rejected(string sql)
     {
         var result = _guard.Validate(sql);
 
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.QueryHintNotAllowed, result.Reason);
+    }
+
+    // One case per expression and predicate type that is on the allowlist but not covered by the cases above.
+    [Theory]
+    // ParenthesisExpression, and the TOP (n) form.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE (2 + 3) * 2 = 10")]
+    [InlineData("SELECT TOP (10) EquipmentName FROM dbo.Certificates")]
+    // BooleanParenthesisExpression
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE (EquipmentType = 'Fridge' OR EquipmentType = 'Microwave') AND IsCompliant = 0")]
+    // BooleanNotExpression
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE NOT EquipmentType = 'Fridge'")]
+    // BooleanIsNullExpression
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE Metric IS NOT NULL")]
+    // ExistsPredicate
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EXISTS (SELECT 1 FROM dbo.Certificates WHERE IsCompliant = 0)")]
+    // SimpleCaseExpression
+    [InlineData("SELECT TOP 10 CASE EquipmentType WHEN 'Fridge' THEN 1 ELSE 0 END FROM dbo.Certificates")]
+    // NullLiteral
+    [InlineData("SELECT TOP 10 COALESCE(Metric, NULL) FROM dbo.Certificates")]
+    // NumericLiteral
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE 2.5 > 1.5")]
+    // MaxLiteral
+    [InlineData("SELECT TOP 10 CAST(EquipmentName AS varchar(max)) FROM dbo.Certificates")]
+    public void Rule7_Allowlisted_expression_types_are_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    // Fail closed: an expression or predicate type that is not on the allowlist is rejected, even though
+    // no rule names it. Full-text predicates are predicates, not function calls.
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE CONTAINS(EquipmentName, 'x')")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE FREETEXT(EquipmentName, 'x')")]
+    // Variables are not on the allowlist.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentName = @x")]
+    [InlineData("SELECT TOP 10 CalibrationDate AT TIME ZONE 'UTC' FROM dbo.Certificates")]
+    // Tricky: ANY/SOME/ALL subquery comparisons are not plain comparisons.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType = ANY (SELECT EquipmentType FROM dbo.Certificates)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE Metric IS DISTINCT FROM EquipmentType")]
+    public void Rule7_Constructs_outside_the_allowlist_are_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.ExpressionNotAllowed, result.Reason);
     }
 
     // OPENROWSET and OPENQUERY are table sources, so rule 4 rejects them before rule 7 runs.

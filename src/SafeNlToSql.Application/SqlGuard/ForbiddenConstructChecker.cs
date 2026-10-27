@@ -5,10 +5,55 @@ namespace SafeNlToSql.Application;
 /// <summary>
 /// Rule 7: no SELECT INTO, no FOR clause, no OPTION or table hint, and no function outside the allowlist,
 /// at any depth (subqueries, CTEs, derived tables, UNION branches).
-/// OPENROWSET and OPENQUERY are table sources, so rule 4 rejects them before this runs.
+/// Expressions and predicates fail closed: every ScalarExpression and BooleanExpression node must be of a type
+/// on <see cref="AllowedExpressionTypes"/>, so a construct nobody thought of is rejected instead of passed.
+/// Table sources are covered by rule 4 (OPENROWSET and OPENQUERY are rejected there before this runs),
+/// TOP and OFFSET by rule 8.
 /// </summary>
 internal static class ForbiddenConstructChecker
 {
+    // Matched by exact type, so a subclass added by a newer ScriptDom is not allowed implicitly.
+    // FunctionCall and ParameterlessCall are further restricted by IsForbiddenFunction.
+    private static readonly HashSet<Type> AllowedExpressionTypes =
+    [
+        // Values
+        typeof(ColumnReferenceExpression),
+        typeof(StringLiteral),
+        typeof(IntegerLiteral),
+        typeof(NumericLiteral),
+        typeof(NullLiteral),
+        typeof(MaxLiteral),
+        // The datepart in DATEADD(day, ...)
+        typeof(IdentifierLiteral),
+        // Operators and grouping
+        typeof(BinaryExpression),
+        typeof(UnaryExpression),
+        typeof(ParenthesisExpression),
+        typeof(ScalarSubquery),
+        // Calls
+        typeof(FunctionCall),
+        typeof(ParameterlessCall),
+        typeof(CastCall),
+        typeof(TryCastCall),
+        typeof(ConvertCall),
+        typeof(TryConvertCall),
+        // CASE, COALESCE and NULLIF are expressions, not function calls
+        typeof(SearchedCaseExpression),
+        typeof(SimpleCaseExpression),
+        typeof(CoalesceExpression),
+        typeof(NullIfExpression),
+        // Predicates
+        typeof(BooleanComparisonExpression),
+        typeof(BooleanBinaryExpression),
+        typeof(BooleanNotExpression),
+        typeof(BooleanParenthesisExpression),
+        typeof(BooleanIsNullExpression),
+        typeof(BooleanTernaryExpression),
+        typeof(InPredicate),
+        typeof(LikePredicate),
+        typeof(ExistsPredicate),
+    ];
+
     // CAST, CONVERT, TRY_CAST, TRY_CONVERT and CURRENT_TIMESTAMP are separate AST nodes, see IsForbiddenFunction.
     private static readonly HashSet<string> AllowedFunctions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -39,8 +84,7 @@ internal static class ForbiddenConstructChecker
         return visitor.Reason;
     }
 
-    // CASE, COALESCE and NULLIF are expressions, not function calls, so they are not listed here and stay allowed.
-    // Anything function-like that is not a plain FunctionCall node is listed explicitly, so it fails closed.
+    // Function-like nodes keep their own reason. Anything else that is not allowlisted gets ExpressionNotAllowed.
     private static bool IsForbiddenFunction(TSqlFragment node) => node switch
     {
         FunctionCall call => call.CallTarget is not null
@@ -70,6 +114,8 @@ internal static class ForbiddenConstructChecker
                 ForClause => SqlGuardReasons.ForClauseNotAllowed,
                 OptimizerHint or TableHint => SqlGuardReasons.QueryHintNotAllowed,
                 _ when IsForbiddenFunction(node) => SqlGuardReasons.FunctionNotAllowed,
+                ScalarExpression or BooleanExpression when !AllowedExpressionTypes.Contains(node.GetType())
+                    => SqlGuardReasons.ExpressionNotAllowed,
                 _ => null,
             };
         }
