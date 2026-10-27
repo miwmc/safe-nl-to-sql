@@ -185,4 +185,92 @@ public class SqlGuardTests
         Assert.False(result.IsAllowed);
         Assert.Equal(SqlGuardReasons.NotSelect, result.Reason);
     }
+
+    // Rule 4: only dbo.Certificates may be referenced.
+    // Accepted cases already satisfy the later rules (TOP <= 100, allowlisted columns, no functions).
+
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates")]
+    // Schema is optional, brackets are optional, casing does not matter.
+    [InlineData("SELECT TOP 10 EquipmentName FROM Certificates")]
+    [InlineData("SELECT TOP 10 c.EquipmentName FROM [dbo].[Certificates] AS c")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM DBO.CERTIFICATES")]
+    [InlineData("SELECT TOP 10 a.EquipmentName FROM dbo.Certificates a JOIN dbo.Certificates b ON a.CertificateNumber = b.CertificateNumber")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM dbo.Certificates WHERE IsCompliant = 0)")]
+    [InlineData("SELECT TOP 10 d.EquipmentName FROM (SELECT EquipmentName FROM dbo.Certificates) AS d")]
+    // Tricky: a CTE name is not a table, and CTE names are case-insensitive.
+    [InlineData("WITH C AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM c")]
+    // Tricky: a CTE that builds on an earlier CTE.
+    [InlineData("WITH a AS (SELECT EquipmentName FROM dbo.Certificates), b AS (SELECT EquipmentName FROM a) SELECT TOP 10 EquipmentName FROM b")]
+    public void Rule4_Only_certificates_table_is_allowed(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.True(result.IsAllowed);
+        Assert.Null(result.Reason);
+    }
+
+    [Theory]
+    // System views and catalog tables.
+    [InlineData("SELECT TOP 10 EquipmentName FROM sys.tables")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM INFORMATION_SCHEMA.TABLES")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Equipment")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM other.Certificates")]
+    // Multi-part names: database and server qualified, even when the table name matches.
+    [InlineData("SELECT TOP 10 EquipmentName FROM otherdb.dbo.Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM otherdb..Certificates")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM srv.otherdb.dbo.Certificates")]
+    // Joins.
+    [InlineData("SELECT TOP 10 c.CertificateNumber FROM dbo.Certificates c JOIN dbo.Clients x ON c.CertificateNumber = x.CertificateNumber")]
+    [InlineData("SELECT TOP 10 c.CertificateNumber FROM dbo.Certificates c, sys.objects o")]
+    // Subqueries, derived tables, UNION branches.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EquipmentType IN (SELECT EquipmentType FROM sys.tables)")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates WHERE EXISTS (SELECT EquipmentType FROM sys.tables)")]
+    [InlineData("SELECT TOP 10 (SELECT EquipmentType FROM sys.tables) FROM dbo.Certificates")]
+    [InlineData("SELECT TOP 10 d.EquipmentName FROM (SELECT EquipmentName FROM sys.tables) AS d")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 10 EquipmentName FROM sys.tables")]
+    // CTEs over other tables, including the second CTE of two.
+    [InlineData("WITH c AS (SELECT EquipmentName FROM sys.tables) SELECT TOP 10 EquipmentName FROM c")]
+    [InlineData("WITH a AS (SELECT EquipmentName FROM dbo.Certificates), b AS (SELECT EquipmentName FROM sys.tables) SELECT TOP 10 EquipmentName FROM a")]
+    // Tricky: bracketed names are still resolved.
+    [InlineData("SELECT TOP 10 EquipmentName FROM [sys].[objects]")]
+    // Tricky: the real table name in a comment does not count.
+    [InlineData("SELECT TOP 10 EquipmentName FROM /* dbo.Certificates */ sys.tables")]
+    // Tricky: a CTE named after the allowed table cannot hide the table it wraps.
+    [InlineData("WITH Certificates AS (SELECT EquipmentName FROM sys.objects) SELECT TOP 10 EquipmentName FROM Certificates")]
+    // Tricky: a CTE name does not make a schema-qualified name allowed (a CTE cannot be schema-qualified).
+    [InlineData("WITH c AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM dbo.c")]
+    // Tricky: a CTE is only visible after its definition. SQL Server resolves the early reference
+    // to a real table named Clients, so it must not be mistaken for the CTE defined later.
+    [InlineData("WITH a AS (SELECT CertificateNumber FROM Clients), Clients AS (SELECT CertificateNumber FROM dbo.Certificates) SELECT TOP 10 CertificateNumber FROM a")]
+    // Tricky: a CTE does not see itself (a recursive reference is not a plain table either).
+    [InlineData("WITH Clients AS (SELECT CertificateNumber FROM Clients) SELECT TOP 10 CertificateNumber FROM Clients")]
+    // Tricky: a CTE named like a system view does not allow the schema-qualified view.
+    [InlineData("WITH tables AS (SELECT EquipmentName FROM dbo.Certificates) SELECT TOP 10 EquipmentName FROM sys.tables")]
+    // Fail closed on table sources that are not plain named tables.
+    [InlineData("SELECT TOP 10 EquipmentName FROM STRING_SPLIT('a,b', ',')")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM OPENROWSET('SQLNCLI', 'Server=x;Trusted_Connection=yes;', 'SELECT 1')")]
+    [InlineData("SELECT TOP 10 EquipmentName FROM @t")]
+    public void Rule4_Other_tables_are_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
+    }
+
+    // Rule 4: the outer query must read from dbo.Certificates, so a query without FROM is rejected.
+
+    [Theory]
+    [InlineData("SELECT TOP 10 1")]
+    [InlineData("SELECT TOP 1 GETDATE()")]
+    // Tricky: a UNION branch without FROM hides behind a valid first branch.
+    [InlineData("SELECT TOP 10 EquipmentName FROM dbo.Certificates UNION SELECT TOP 1 1")]
+    public void Rule4_Query_without_from_is_rejected(string sql)
+    {
+        var result = _guard.Validate(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(SqlGuardReasons.TableNotAllowed, result.Reason);
+    }
 }

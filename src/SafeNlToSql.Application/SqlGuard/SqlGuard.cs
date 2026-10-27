@@ -66,9 +66,14 @@ public sealed class SqlGuard
             return GuardResult.Reject(SqlGuardReasons.MultipleStatements);
         }
 
-        if (statements[0] is not SelectStatement)
+        if (statements[0] is not SelectStatement select)
         {
             return GuardResult.Reject(SqlGuardReasons.NotSelect);
+        }
+
+        if (!TableReferenceChecker.IsAllowed(select))
+        {
+            return GuardResult.Reject(SqlGuardReasons.TableNotAllowed);
         }
 
         return GuardResult.Allow();

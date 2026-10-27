@@ -40,7 +40,7 @@ Parse with ScriptDom (TSql160Parser). Regex is not enough. Reject when:
 1. The SQL does not parse (a parser exception counts as not parseable), or it is longer than 2000 characters. The length is checked before parsing, which bounds nesting depth.
 2. There is not exactly one statement (zero statements, such as empty or comment-only input, is rejected as well as more than one).
 3. The statement is not a SELECT (INSERT, UPDATE, DELETE, MERGE, DROP, EXEC, etc.).
-4. It references any table other than dbo.Certificates (including joins, subqueries, CTEs over other tables, system views like sys.tables or INFORMATION_SCHEMA).
+4. It references any table other than dbo.Certificates (including joins, subqueries, CTEs over other tables, system views like sys.tables or INFORMATION_SCHEMA). The schema and brackets are optional, names are case-insensitive, and database- or server-qualified names are rejected. A CTE name is only valid after its definition (no forward or self reference). The outer query, and each UNION branch, must have a FROM clause, so `SELECT TOP 1 GETDATE()` is rejected.
 5. It selects or filters on a column outside the allowlist: CertificateNumber, EquipmentName, EquipmentType, Metric, CalibrationDate, IsCompliant. ClientName and `SELECT *` are rejected.
 6. It uses a date filter on any column other than CalibrationDate.
 7. It uses SELECT INTO, OPENROWSET, OPENQUERY, any FOR clause (FOR XML, FOR JSON, FOR BROWSE), any OPTION query hint, or any function outside a small allowlist (e.g. GETDATE, DATEADD, COUNT).

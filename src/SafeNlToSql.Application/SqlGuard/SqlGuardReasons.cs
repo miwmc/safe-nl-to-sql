@@ -8,4 +8,5 @@ public static class SqlGuardReasons
     public const string NoStatement = "SQL contains no statement";
     public const string MultipleStatements = "SQL contains more than one statement";
     public const string NotSelect = "Only a SELECT statement is allowed";
+    public const string TableNotAllowed = "Only dbo.Certificates may be queried";
 }
