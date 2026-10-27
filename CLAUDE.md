@@ -8,7 +8,7 @@
 - Full suite: `dotnet test` (run once before saying a task is done)
 - Database: `docker compose up -d` / `docker compose down`
 - Run API: `dotnet run --project src/SafeNlToSql.Api`
-- A hook filters plain `dotnet test` output to failures and the summary. For full output, run `dotnet test ... 2>&1 | tail -200`.
+- A hook filters plain `dotnet test` output to failures and the summary. Always run it plain first; only if that output is not enough, rerun with `2>&1 | tail -200`.
 
 # Architecture
 - src/SafeNlToSql.Api (endpoints, DI), src/SafeNlToSql.Application (SqlGuard, ISqlGenerator, use case), src/SafeNlToSql.Infrastructure (Azure OpenAI, Dapper, seed). Api -> Application <- Infrastructure; Application never references Infrastructure.

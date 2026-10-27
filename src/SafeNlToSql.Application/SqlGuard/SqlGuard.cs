@@ -66,9 +66,38 @@ public sealed class SqlGuard
             return GuardResult.Reject(SqlGuardReasons.MultipleStatements);
         }
 
-        if (statements[0] is not SelectStatement)
+        if (statements[0] is not SelectStatement select)
         {
             return GuardResult.Reject(SqlGuardReasons.NotSelect);
+        }
+
+        var tableViolation = TableReferenceChecker.FindViolation(select);
+        if (tableViolation is not null)
+        {
+            return GuardResult.Reject(tableViolation);
+        }
+
+        var columnViolation = ColumnReferenceChecker.FindViolation(select);
+        if (columnViolation is not null)
+        {
+            return GuardResult.Reject(columnViolation);
+        }
+
+        if (!DateFilterChecker.IsAllowed(select))
+        {
+            return GuardResult.Reject(SqlGuardReasons.DateFilterNotAllowed);
+        }
+
+        var constructViolation = ForbiddenConstructChecker.FindViolation(select);
+        if (constructViolation is not null)
+        {
+            return GuardResult.Reject(constructViolation);
+        }
+
+        var topViolation = TopLimitChecker.FindViolation(select);
+        if (topViolation is not null)
+        {
+            return GuardResult.Reject(topViolation);
         }
 
         return GuardResult.Allow();
