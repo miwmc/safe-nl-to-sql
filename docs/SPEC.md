@@ -57,14 +57,16 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 ## Defence in depth
 1. Prompt: tells the model the rules (can be ignored by the model).
 2. SqlGuard: parses and enforces the rules in code.
-3. Database: the API connects as `nl_search_reader`, which has SELECT on dbo.Certificates and nothing else. Even if 1 and 2 fail, the database refuses.
+3. Database: the API connects as `nl_search_reader`, which has SELECT on the six allowed columns of dbo.Certificates (not ClientName) and nothing else, so even if 1 and 2 fail, the database refuses ClientName and other tables.
+
+Known limitation: the guard can approve a query that the database denies (error 230). The reader only has column-level SELECT, and when a table reference uses no allowed column anywhere in its scope, SQL Server asks for SELECT on every column of the table. Examples: a bare `SELECT COUNT(*) FROM dbo.Certificates`, `COUNT(1)`, `SELECT TOP 1 1 ...`, or `EXISTS (SELECT 1 FROM dbo.Certificates)` with no inner filter. This is the fail-closed direction, and the guard deliberately does not copy SQL Server's permission rules: both layers fail closed and need not agree. `COUNT(*)` with a filter on an allowed column works.
 
 ## Pull request plan
 1. Scaffold: solution, projects, xUnit, CLAUDE.md, docs, GitHub Actions running build and test.
 2. SqlGuard rules 1-3, tests first.
 3. SqlGuard rules 4-8, tests first.
-4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time.
-5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator.
+4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time. The executor maps database errors 229 and 230 to `QueryResult.Failed(QueryExecutionReasons.QueryNotPermitted)`, an empty result with a reason.
+5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
 6. README: what it does, how to run, and "How I built this with Claude Code".
 
 ## Out of scope

@@ -1,6 +1,6 @@
 # safe-nl-to-sql
 
-The goal: ask a question about equipment calibration certificates in plain language, and get rows back. An LLM turns the question into T-SQL, but the model is never trusted. Today the core safety layer, SqlGuard, is built and tested: every generated query is parsed and checked before it can run. Next, approved queries will run as a database user that can only read one table, and a rejected query returns a reason instead of being repaired.
+The goal: ask a question about equipment calibration certificates in plain language, and get rows back. An LLM turns the question into T-SQL, but the model is never trusted. Today two safety layers are built and tested. SqlGuard parses and checks every generated query before it can run, and approved queries run as a read-only database user that has SELECT on six columns only. A rejected query returns a reason instead of being repaired. Still to come are the LLM that writes the SQL and the `/search` endpoint.
 
 ## Status
 
@@ -9,7 +9,7 @@ In progress. Pull request plan:
 - [x] 1. Scaffold: solution, projects, xUnit, docs, GitHub Actions build and test
 - [x] 2. SqlGuard rules 1-3, tests first
 - [x] 3. SqlGuard rules 4-8, tests first
-- [ ] 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper
+- [x] 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper
 - [ ] 5. ISqlGenerator with Azure OpenAI, the `/search` endpoint, integration tests with the fake generator
 - [ ] 6. README: what it does, how to run, and how it was built
 
@@ -41,13 +41,27 @@ dotnet build
 dotnet test
 ```
 
-The tests need no database and no LLM. They cover every SqlGuard rule with accept, reject and tricky cases.
+The unit tests need no database and no LLM. They cover every SqlGuard rule with accept, reject and tricky cases. The integration tests start SQL Server in a container, so **Docker must be running** for `dotnet test`.
+
+## Run locally
+
+1. Copy `.env.example` to `.env` and set `MSSQL_SA_PASSWORD` and `READER_PASSWORD`. Both must meet SQL Server's complexity policy and must not contain `'`, `"` or `$`. `.env` is git-ignored.
+2. Start the database: `docker compose up -d`. SQL Server starts, then a one-shot `db-init` service runs `db/*.sql` (schema, invented seed data, and the read-only `nl_search_reader` login) and exits.
+3. Check that the init finished: `docker compose ps -a` must show `db-init` as `Exited (0)`. `up -d` returns before `db-init` is done, so wait a few seconds and run it again if it is still running. If it shows any other exit code, read the reason with `docker compose logs db-init` (a `READER_PASSWORD` that fails the complexity policy is a common cause) and fix it before you go on.
+4. Store the reader connection string as a user secret, using the `READER_PASSWORD` from `.env`:
+
+```bash
+dotnet user-secrets init --project src/SafeNlToSql.Api
+dotnet user-secrets set "ConnectionStrings:Reader" "Server=localhost,1433;Database=SafeNlToSql;User Id=nl_search_reader;Password=<READER_PASSWORD>;TrustServerCertificate=True" --project src/SafeNlToSql.Api
+```
+
+The reader connection string is read by `AddInfrastructure`, which the API does not call yet (the `/search` endpoint comes in PR 5). Stop the database with `docker compose down`.
 
 ## Tech stack
 
 - .NET 10 Minimal API
 - Microsoft.SqlServer.TransactSql.ScriptDom for SQL validation
-- SQL Server in Docker, accessed with Dapper (PR 4)
+- SQL Server in Docker, accessed with Dapper
 - Azure OpenAI for SQL generation (PR 5)
 - xUnit, and GitHub Actions for CI
 

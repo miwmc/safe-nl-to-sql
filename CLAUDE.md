@@ -6,7 +6,7 @@
 - Build: `dotnet build`
 - One test class: `dotnet test --filter "FullyQualifiedName~<ClassName>"` (prefer this over the full suite while iterating)
 - Full suite: `dotnet test` (run once before saying a task is done)
-- Database: `docker compose up -d` / `docker compose down`
+- Database: `docker compose up -d` / `docker compose down`. Integration tests start their own SQL Server with Testcontainers, so Docker must be running for `dotnet test`.
 - Run API: `dotnet run --project src/SafeNlToSql.Api`
 - A hook filters plain `dotnet test` output to failures and the summary. Always run it plain first; only if that output is not enough, rerun with `2>&1 | tail -200`.
 
@@ -21,7 +21,7 @@
 
 # Rules
 - IMPORTANT: never execute generated SQL unless SqlGuard approved it.
-- The nl_search_reader login gets SELECT on dbo.Certificates and nothing else.
+- The nl_search_reader login gets SELECT on the six allowed columns of dbo.Certificates (not ClientName) and nothing else.
 - On rejection return an empty result with a reason. Never repair or guess the query.
 - Seed data is invented. No real client data.
 
@@ -29,6 +29,7 @@
 - Verify your own work: after a change, build, run the relevant tests, and iterate until they pass. Show me the command and its result, not just "done".
 - Work in small steps and stop after each one so I can review the diff.
 - Do not commit or push. I review and commit myself.
+- Edit files only with the Edit tool, never with python, sed or shell redirects.
 - If something is ambiguous, ask instead of guessing.
 - New SqlGuard rule: use the add-guard-rule skill.
 

@@ -6,7 +6,9 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Testcontainers.MsSql" Version="4.17.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -17,6 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SafeNlToSql.Api\SafeNlToSql.Api.csproj" />
+  </ItemGroup>
+
+  <!-- The tests run the same scripts as docker compose; they are linked, never copied. -->
+  <ItemGroup>
+    <None Include="..\..\db\*.sql" LinkBase="db" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docker-compose.yml" Link="docker-compose.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -100,6 +100,6 @@ public sealed class SqlGuard
             return GuardResult.Reject(topViolation);
         }
 
-        return GuardResult.Allow();
+        return GuardResult.Allow(sql);
     }
 }
