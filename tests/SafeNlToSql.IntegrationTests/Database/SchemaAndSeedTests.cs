@@ -106,9 +106,9 @@ public class SchemaAndSeedTests(DatabaseFixture db)
     }
 
     [Fact]
-    public void Compose_and_tests_use_same_sql_image()
+    public async Task Compose_and_tests_use_same_sql_image()
     {
-        var compose = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "docker-compose.yml"));
+        var compose = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "docker-compose.yml"));
 
         var images = Regex.Matches(compose, @"^\s*image:\s*(\S+)\s*$", RegexOptions.Multiline)
             .Select(m => m.Groups[1].Value)

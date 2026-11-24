@@ -65,8 +65,8 @@ Known limitation: the guard can approve a query that the database denies (error 
 1. Scaffold: solution, projects, xUnit, CLAUDE.md, docs, GitHub Actions running build and test.
 2. SqlGuard rules 1-3, tests first.
 3. SqlGuard rules 4-8, tests first.
-4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time.
-5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The executor or the endpoint maps database errors 229 and 230 to a rejected result with a clear reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
+4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time. The executor maps database errors 229 and 230 to `QueryResult.Failed(QueryExecutionReasons.QueryNotPermitted)`, an empty result with a reason.
+5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
 6. README: what it does, how to run, and "How I built this with Claude Code".
 
 ## Out of scope

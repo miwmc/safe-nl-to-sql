@@ -59,15 +59,39 @@ public class DapperQueryExecutorTests(DatabaseFixture db)
     }
 
     [Fact]
-    public async Task Executor_bare_count_star_throws_SqlException_230()
+    public async Task Executor_bare_count_star_returns_QueryNotPermitted()
     {
-        // The guard approves this (COUNT(*) is allowed), the database denies it: no allowed column is referenced.
+        // The guard approves this (COUNT(*) is allowed), the database denies it with 230: no allowed column is referenced.
         var approved = Approve("SELECT TOP 1 COUNT(*) AS Total FROM dbo.Certificates");
 
-        var exception = await Assert.ThrowsAsync<SqlException>(
-            () => CreateExecutor().ExecuteAsync(approved, CancellationToken.None));
+        var result = await CreateExecutor().ExecuteAsync(approved, CancellationToken.None);
 
-        Assert.Equal(230, exception.Number);
+        Assert.Equal(QueryExecutionReasons.QueryNotPermitted, result.Reason);
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task Executor_object_permission_denied_229_returns_QueryNotPermitted()
+    {
+        // The guard approves this query, but we revoke the reader's SELECT on dbo.Certificates so the database refuses it with 229.
+        // The finally block runs the db scripts again, so the reader's permissions match 03_reader.sql for the other tests.
+        await SqlHelper.ExecuteAsync(db.SaConnectionString, "REVOKE SELECT ON dbo.Certificates FROM nl_search_reader;");
+        try
+        {
+            const string sql = "SELECT TOP 1 EquipmentName FROM dbo.Certificates";
+
+            // First prove that the setup really produces 229, so this test cannot pass without a denial.
+            await SqlHelper.AssertDeniedAsync(db.ReaderConnectionString, sql, 229);
+
+            var result = await CreateExecutor().ExecuteAsync(Approve(sql), CancellationToken.None);
+
+            Assert.Equal(QueryExecutionReasons.QueryNotPermitted, result.Reason);
+            Assert.Empty(result.Rows);
+        }
+        finally
+        {
+            await db.RunScriptsAsync();
+        }
     }
 
     [Fact]

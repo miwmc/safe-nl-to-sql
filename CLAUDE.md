@@ -29,6 +29,7 @@
 - Verify your own work: after a change, build, run the relevant tests, and iterate until they pass. Show me the command and its result, not just "done".
 - Work in small steps and stop after each one so I can review the diff.
 - Do not commit or push. I review and commit myself.
+- Edit files only with the Edit tool, never with python, sed or shell redirects.
 - If something is ambiguous, ask instead of guessing.
 - New SqlGuard rule: use the add-guard-rule skill.
 

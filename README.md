@@ -47,7 +47,8 @@ The unit tests need no database and no LLM. They cover every SqlGuard rule with 
 
 1. Copy `.env.example` to `.env` and set `MSSQL_SA_PASSWORD` and `READER_PASSWORD`. Both must meet SQL Server's complexity policy and must not contain `'`, `"` or `$`. `.env` is git-ignored.
 2. Start the database: `docker compose up -d`. SQL Server starts, then a one-shot `db-init` service runs `db/*.sql` (schema, invented seed data, and the read-only `nl_search_reader` login) and exits.
-3. Store the reader connection string as a user secret, using the `READER_PASSWORD` from `.env`:
+3. Check that the init finished: `docker compose ps -a` must show `db-init` as `Exited (0)`. `up -d` returns before `db-init` is done, so wait a few seconds and run it again if it is still running. If it shows any other exit code, read the reason with `docker compose logs db-init` (a `READER_PASSWORD` that fails the complexity policy is a common cause) and fix it before you go on.
+4. Store the reader connection string as a user secret, using the `READER_PASSWORD` from `.env`:
 
 ```bash
 dotnet user-secrets init --project src/SafeNlToSql.Api

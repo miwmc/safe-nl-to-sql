@@ -79,6 +79,9 @@ BEGIN
            (N'Contoso Catering',  N'kitchen@contoso.invalid'),
            (N'Fabrikam Foods',    N'qa@fabrikam.invalid'),
            (N'Tailspin Pharma',   N'quality@tailspin.invalid'),
-           (N'Litware Studios',   N'audio@litware.invalid');
+           (N'Litware Studios',   N'audio@litware.invalid'),
+           (N'Adventure Clinics', N'lab@adventure.invalid'),
+           (N'Wingtip Bakery',    N'quality@wingtip.invalid'),
+           (N'Proseware Radio',   N'tech@proseware.invalid');
 END
 GO

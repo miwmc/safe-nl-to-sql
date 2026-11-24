@@ -51,7 +51,7 @@ public sealed class DatabaseFixture : IAsyncLifetime
 
         foreach (var path in ScriptPaths())
         {
-            await _container.CopyAsync(File.ReadAllBytes(path), ContainerPath(path));
+            await _container.CopyAsync(await File.ReadAllBytesAsync(path), ContainerPath(path));
         }
 
         await RunScriptsAsync();

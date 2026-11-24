@@ -44,16 +44,32 @@ public class ApprovedSqlTests
     [Fact]
     public void Only_SqlGuard_results_can_carry_ApprovedSql()
     {
-        // A caller can build a GuardResult by hand, but cannot attach an ApprovedSql to it:
-        // the setter is private and the factory that creates one is internal.
-        var forged = new GuardResult(true, null);
+        // Outside the Application assembly the only GuardResult a caller can build is a rejection:
+        // there is no public constructor, the Approved setter is not public, and the Allow factory is internal.
+        var constructors = typeof(GuardResult).GetConstructors(BindingFlags.Public | BindingFlags.Instance);
+        Assert.Empty(constructors);
 
-        Assert.Null(forged.Approved);
-
-        var setter = typeof(GuardResult).GetProperty(nameof(GuardResult.Approved))!.SetMethod!;
-        Assert.False(setter.IsPublic);
+        var setter = typeof(GuardResult).GetProperty(nameof(GuardResult.Approved))!.SetMethod;
+        Assert.True(setter is null || !setter.IsPublic);
 
         var allow = typeof(GuardResult).GetMethod("Allow", BindingFlags.Public | BindingFlags.Static);
         Assert.Null(allow);
+
+        var rejected = GuardResult.Reject("because");
+        Assert.False(rejected.IsAllowed);
+        Assert.Null(rejected.Approved);
+        Assert.Equal("because", rejected.Reason);
+    }
+
+    [Fact]
+    public void IsAllowed_is_true_exactly_when_Approved_is_set()
+    {
+        var allowed = _guard.Validate("SELECT TOP 10 EquipmentName FROM dbo.Certificates");
+        var rejected = _guard.Validate("DROP TABLE dbo.Certificates");
+
+        Assert.Equal(allowed.Approved is not null, allowed.IsAllowed);
+        Assert.True(allowed.IsAllowed);
+        Assert.Equal(rejected.Approved is not null, rejected.IsAllowed);
+        Assert.False(rejected.IsAllowed);
     }
 }
