@@ -6,7 +6,7 @@
 - Build: `dotnet build`
 - One test class: `dotnet test --filter "FullyQualifiedName~<ClassName>"` (prefer this over the full suite while iterating)
 - Full suite: `dotnet test` (run once before saying a task is done)
-- Database: `docker compose up -d` / `docker compose down`
+- Database: `docker compose up -d` / `docker compose down`. Integration tests start their own SQL Server with Testcontainers, so Docker must be running for `dotnet test`.
 - Run API: `dotnet run --project src/SafeNlToSql.Api`
 - A hook filters plain `dotnet test` output to failures and the summary. Always run it plain first; only if that output is not enough, rerun with `2>&1 | tail -200`.
 
