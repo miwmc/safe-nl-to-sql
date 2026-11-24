@@ -21,7 +21,7 @@
 
 # Rules
 - IMPORTANT: never execute generated SQL unless SqlGuard approved it.
-- The nl_search_reader login gets SELECT on dbo.Certificates and nothing else.
+- The nl_search_reader login gets SELECT on the six allowed columns of dbo.Certificates (not ClientName) and nothing else.
 - On rejection return an empty result with a reason. Never repair or guess the query.
 - Seed data is invented. No real client data.
 
