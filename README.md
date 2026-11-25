@@ -1,6 +1,6 @@
 # safe-nl-to-sql
 
-The goal: ask a question about equipment calibration certificates in plain language, and get rows back. An LLM turns the question into T-SQL, but the model is never trusted. Today two safety layers are built and tested. SqlGuard parses and checks every generated query before it can run, and approved queries run as a read-only database user that has SELECT on six columns only. A rejected query returns a reason instead of being repaired. Still to come are the LLM that writes the SQL and the `/search` endpoint.
+The goal: ask a question about equipment calibration certificates in plain language, and get rows back. An LLM turns the question into T-SQL, but the model is never trusted. Today two safety layers are built and tested. SqlGuard parses and checks every generated query before it can run, and approved queries run as a read-only database user that has SELECT on six columns only. A rejected query returns a reason instead of being repaired. The `/search` endpoint connects these layers and is tested with a fake generator. Still to come is the LLM that writes the SQL.
 
 ## Status
 
@@ -55,7 +55,7 @@ dotnet user-secrets init --project src/SafeNlToSql.Api
 dotnet user-secrets set "ConnectionStrings:Reader" "Server=localhost,1433;Database=SafeNlToSql;User Id=nl_search_reader;Password=<READER_PASSWORD>;TrustServerCertificate=True" --project src/SafeNlToSql.Api
 ```
 
-The reader connection string is read by `AddInfrastructure`, which the API does not call yet (the `/search` endpoint comes in PR 5). Stop the database with `docker compose down`.
+The API reads the reader connection string at startup and does not start without it. `dotnet run --project src/SafeNlToSql.Api` serves `POST /search`, but no SQL generator is configured yet (Azure OpenAI is the rest of PR 5), so a valid question returns 503. Stop the database with `docker compose down`.
 
 ## Tech stack
 

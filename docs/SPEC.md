@@ -33,7 +33,7 @@ Response 200:
   "rows": [ { "certificateNumber": "...", "equipmentName": "...", "...": "..." } ]
 }
 ```
-A rejected query returns 200 with `rejected: true`, a `reason` and empty `rows`. Invalid input (empty question, over 500 characters) returns 400.
+A rejected query returns 200 with `rejected: true`, a `reason` and empty `rows`. Invalid input (empty question, over 500 characters) returns 400. If the SQL generator fails, the response is 503 with a generic message: no exception text, model output or SQL.
 
 ## SqlGuard rules
 Parse with ScriptDom (TSql160Parser). Regex is not enough. Reject when:
