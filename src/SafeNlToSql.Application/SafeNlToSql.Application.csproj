@@ -3,6 +3,7 @@
     <InternalsVisibleTo Include="SafeNlToSql.UnitTests" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
     <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="180.140.0" />
   </ItemGroup>
 </Project>

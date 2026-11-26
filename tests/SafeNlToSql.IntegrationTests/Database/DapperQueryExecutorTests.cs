@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SafeNlToSql.Application;
 using SafeNlToSql.Infrastructure;
@@ -12,8 +14,11 @@ namespace SafeNlToSql.IntegrationTests.Database;
 [Collection("Database")]
 public class DapperQueryExecutorTests(DatabaseFixture db)
 {
-    private DapperQueryExecutor CreateExecutor(int timeoutSeconds = 5) =>
-        new(db.ReaderConnectionString, Options.Create(new DatabaseOptions { CommandTimeoutSeconds = timeoutSeconds }));
+    private DapperQueryExecutor CreateExecutor(
+        int timeoutSeconds = 5, string? connectionString = null, ILogger<DapperQueryExecutor>? logger = null) =>
+        new(connectionString ?? db.ReaderConnectionString,
+            Options.Create(new DatabaseOptions { CommandTimeoutSeconds = timeoutSeconds }),
+            logger ?? NullLogger<DapperQueryExecutor>.Instance);
 
     private static ApprovedSql Approve(string sql)
     {
@@ -92,6 +97,76 @@ public class DapperQueryExecutorTests(DatabaseFixture db)
         {
             await db.RunScriptsAsync();
         }
+    }
+
+    [Theory]
+    [InlineData("SELECT TOP 10 EquipmentType, COUNT(CertificateNumber) FROM dbo.Certificates", 8120)]
+    [InlineData("SELECT TOP 10 CertificateNumber FROM dbo.Certificates WHERE CalibrationDate > 'last month'", 241)]
+    [InlineData("SELECT TOP 10 CertificateNumber FROM dbo.Certificates WHERE CalibrationDate > CAST('1000-01-01' AS datetime)", 242)]
+    [InlineData("SELECT TOP 10 CertificateNumber FROM dbo.Certificates WHERE EquipmentName = 1", 245)]
+    [InlineData("SELECT TOP 10 CertificateNumber FROM dbo.Certificates WHERE EquipmentName = 1.5", 8114)]
+    [InlineData("SELECT TOP 10 CertificateNumber, CAST(1000 AS decimal(2,0)) AS Small FROM dbo.Certificates", 8115)]
+    [InlineData("SELECT TOP 10 CertificateNumber, 1 / 0 AS Ratio FROM dbo.Certificates", 8134)]
+    public async Task Query_error_returns_QueryFailed_and_logs_the_exception(string sql, int expectedNumber)
+    {
+        // First prove that the database really raises this number, so the test cannot pass for another error.
+        await SqlHelper.AssertSqlErrorAsync(db.ReaderConnectionString, sql, expectedNumber);
+        var logger = new RecordingLogger();
+
+        var result = await CreateExecutor(logger: logger).ExecuteAsync(Approve(sql), CancellationToken.None);
+
+        // The fixed reason, so none of the database message is returned.
+        Assert.Equal(QueryExecutionReasons.QueryFailed, result.Reason);
+        Assert.Empty(result.Rows);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Error, entry.Level);
+        Assert.Equal(expectedNumber, Assert.IsType<SqlException>(entry.Exception).Number);
+    }
+
+    [Fact]
+    public async Task Query_error_not_on_the_list_throws()
+    {
+        // 8117: MAX does not accept a bit column. It is the query's own error, but it is not on the list.
+        const string sql = "SELECT TOP 1 MAX(IsCompliant) AS Highest FROM dbo.Certificates";
+        await SqlHelper.AssertSqlErrorAsync(db.ReaderConnectionString, sql, 8117);
+        var approved = Approve(sql);
+
+        var exception = await Assert.ThrowsAsync<SqlException>(
+            () => CreateExecutor().ExecuteAsync(approved, CancellationToken.None));
+
+        Assert.Equal(8117, exception.Number);
+    }
+
+    [Fact]
+    public async Task Wrong_password_throws()
+    {
+        var connectionString = new SqlConnectionStringBuilder(db.ReaderConnectionString)
+        {
+            Password = "Wrong-password-1!",
+        }.ConnectionString;
+
+        await AssertConnectionFailureThrowsAsync(connectionString, 18456);
+    }
+
+    [Fact]
+    public async Task Missing_database_throws()
+    {
+        var connectionString = new SqlConnectionStringBuilder(db.ReaderConnectionString)
+        {
+            InitialCatalog = "NoSuchDatabase",
+        }.ConnectionString;
+
+        await AssertConnectionFailureThrowsAsync(connectionString, 4060);
+    }
+
+    private async Task AssertConnectionFailureThrowsAsync(string connectionString, int expectedNumber)
+    {
+        var approved = Approve("SELECT TOP 1 EquipmentName FROM dbo.Certificates");
+
+        var exception = await Assert.ThrowsAsync<SqlException>(
+            () => CreateExecutor(connectionString: connectionString).ExecuteAsync(approved, CancellationToken.None));
+
+        Assert.Equal(expectedNumber, exception.Number);
     }
 
     [Fact]
@@ -193,7 +268,7 @@ public class DapperQueryExecutorTests(DatabaseFixture db)
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Reader"] = db.ReaderConnectionString })
             .Build();
 
-        using var provider = new ServiceCollection().AddInfrastructure(configuration).BuildServiceProvider();
+        using var provider = new ServiceCollection().AddLogging().AddInfrastructure(configuration).BuildServiceProvider();
 
         Assert.IsType<DapperQueryExecutor>(provider.GetRequiredService<IQueryExecutor>());
         Assert.Equal(5, provider.GetRequiredService<IOptions<DatabaseOptions>>().Value.CommandTimeoutSeconds);
@@ -207,28 +282,16 @@ public class DapperQueryExecutorTests(DatabaseFixture db)
         Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddInfrastructure(configuration));
     }
 
-    /// <summary>Holds an exclusive lock on dbo.Certificates until disposed (the transaction is rolled back).</summary>
-    private sealed class TableLock : IAsyncDisposable
+    private sealed class RecordingLogger : ILogger<DapperQueryExecutor>
     {
-        private readonly SqlConnection _connection;
+        public List<(LogLevel Level, Exception? Exception)> Entries { get; } = [];
 
-        private TableLock(SqlConnection connection) => _connection = connection;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-        public static async Task<TableLock> AcquireAsync(string saConnectionString)
-        {
-            var connection = new SqlConnection(saConnectionString);
-            await connection.OpenAsync();
-            await using var command = new SqlCommand(
-                "BEGIN TRAN; SELECT TOP 1 Id FROM dbo.Certificates WITH (TABLOCKX, HOLDLOCK);", connection);
-            await command.ExecuteNonQueryAsync();
-            return new TableLock(connection);
-        }
+        public bool IsEnabled(LogLevel logLevel) => true;
 
-        public async ValueTask DisposeAsync()
-        {
-            await using var command = new SqlCommand("IF @@TRANCOUNT > 0 ROLLBACK;", _connection);
-            await command.ExecuteNonQueryAsync();
-            await _connection.DisposeAsync();
-        }
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, exception));
     }
 }

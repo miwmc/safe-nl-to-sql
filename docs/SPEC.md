@@ -33,7 +33,7 @@ Response 200:
   "rows": [ { "certificateNumber": "...", "equipmentName": "...", "...": "..." } ]
 }
 ```
-A rejected query returns 200 with `rejected: true`, a `reason` and empty `rows`. Invalid input (empty question, over 500 characters) returns 400.
+A rejected query returns 200 with `rejected: true`, a `reason` and empty `rows`. Invalid input (a body that cannot be read, an empty question, over 500 characters) returns 400. If the SQL generator fails, the response is 503 with a generic message: no exception text, model output or SQL.
 
 ## SqlGuard rules
 Parse with ScriptDom (TSql160Parser). Regex is not enough. Reject when:
@@ -61,12 +61,21 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 
 Known limitation: the guard can approve a query that the database denies (error 230). The reader only has column-level SELECT, and when a table reference uses no allowed column anywhere in its scope, SQL Server asks for SELECT on every column of the table. Examples: a bare `SELECT COUNT(*) FROM dbo.Certificates`, `COUNT(1)`, `SELECT TOP 1 1 ...`, or `EXISTS (SELECT 1 FROM dbo.Certificates)` with no inner filter. This is the fail-closed direction, and the guard deliberately does not copy SQL Server's permission rules: both layers fail closed and need not agree. `COUNT(*)` with a filter on an allowed column works.
 
+## Query errors
+The guard can also approve a query that SQL Server cannot run. The executor returns `QueryResult.Failed(QueryExecutionReasons.QueryFailed)`, an empty rejected result with a fixed reason, only when both are true:
+- the error is raised while running the approved SQL or reading its rows, not while opening the connection or setting up the session;
+- its number is on this list: 241, 242, 245 (conversion failures), 8114 (data type conversion), 8115 (arithmetic overflow), 8120 (missing GROUP BY), 8134 (divide by zero).
+
+The full exception is logged. The database message is never returned, and the SQL is never retried or repaired. Every other error is thrown, so `/search` returns 500 with no exception text: this includes connection and login failures, invalid column or object names (207, 208, which point to a wrong schema), lock timeouts and deadlocks. Severity cannot tell these apart, because several of them share severity 16 with the listed errors.
+
+The list is deliberately small. It grows only when 5b shows the model producing a new error number.
+
 ## Pull request plan
 1. Scaffold: solution, projects, xUnit, CLAUDE.md, docs, GitHub Actions running build and test.
 2. SqlGuard rules 1-3, tests first.
 3. SqlGuard rules 4-8, tests first.
 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time. The executor maps database errors 229 and 230 to `QueryResult.Failed(QueryExecutionReasons.QueryNotPermitted)`, an empty result with a reason.
-5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
+5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`, `QueryFailed`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
 6. README: what it does, how to run, and "How I built this with Claude Code".
 
 ## Out of scope
