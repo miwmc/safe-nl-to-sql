@@ -15,12 +15,14 @@ namespace SafeNlToSql.Infrastructure;
 /// <summary>
 /// Asks an Azure OpenAI deployment for SQL through the Responses API on the v1 endpoint. Returns the output
 /// text exactly as received, without stripping or repairing it: SqlGuard decides whether it may run.
-/// Anything but a completed response throws.
+/// Anything but a completed response throws: GeneratorRefusedException when the content filter blocked the
+/// question or the answer, and another exception for every failure.
 /// </summary>
 public sealed class AzureOpenAiSqlGenerator : ISqlGenerator
 {
     private const int MaxRetries = 1;
     private const int MaxErrorCodeLength = 64;
+    private const string ContentFilterCode = "content_filter";
 
     private readonly ResponsesClient _client;
     private readonly string _deployment;
@@ -97,9 +99,14 @@ public sealed class AzureOpenAiSqlGenerator : ISqlGenerator
         // that is broader than the question. So the status is checked before the text is read.
         if (response.Status != ResponseStatus.Completed)
         {
-            throw new InvalidOperationException(
+            var description =
                 $"Azure OpenAI response status {response.Status?.ToString() ?? "missing"} " +
-                $"(reason {response.IncompleteStatusDetails?.Reason?.ToString() ?? "none"})");
+                $"(reason {response.IncompleteStatusDetails?.Reason?.ToString() ?? "none"})";
+            var filtered = response.Status == ResponseStatus.Incomplete
+                && response.IncompleteStatusDetails?.Reason == ResponseIncompleteStatusReason.ContentFilter;
+            throw filtered
+                ? new GeneratorRefusedException(description)
+                : new InvalidOperationException(description);
         }
 
         var sql = response.GetOutputText();
@@ -117,9 +124,9 @@ public sealed class AzureOpenAiSqlGenerator : ISqlGenerator
     /// What a failed request is reported as. The SDK's exceptions carry the server's error message, which
     /// could quote the question, or the host name and socket error, and the caller logs the whole exception.
     /// So only the status and a checked error code are carried over, and the original is deliberately not
-    /// kept as the inner exception.
+    /// kept as the inner exception. A 400 from the content filter is a refusal, because a retry can never help.
     /// </summary>
-    private static HttpRequestException RequestFailed(ClientResultException? exception)
+    private static Exception RequestFailed(ClientResultException? exception)
     {
         // A status of 0 means there was no response.
         if (exception is null || exception.Status == 0)
@@ -127,10 +134,13 @@ public sealed class AzureOpenAiSqlGenerator : ISqlGenerator
             return new HttpRequestException("Azure OpenAI request failed: no response");
         }
 
-        return new HttpRequestException(
-            $"Azure OpenAI request failed with HTTP {exception.Status} (code {ReadErrorCode(exception)})",
-            inner: null,
-            statusCode: (HttpStatusCode)exception.Status);
+        var status = (HttpStatusCode)exception.Status;
+        var code = ReadErrorCode(exception);
+        var description = $"Azure OpenAI request failed with HTTP {exception.Status} (code {code})";
+
+        return status == HttpStatusCode.BadRequest && code == ContentFilterCode
+            ? new GeneratorRefusedException(description)
+            : new HttpRequestException(description, inner: null, statusCode: status);
     }
 
     /// <summary>

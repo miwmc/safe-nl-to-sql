@@ -85,7 +85,9 @@ curl -X POST http://localhost:5140/search \
 
 ### Live tests
 
-The live tests send real questions to your Azure OpenAI deployment. **Each run makes at least 12 billed calls to the deployment**, since a retry after a 429 or 500 sends one more. They need the user secrets from step 5, and Docker running (they start their own SQL Server). They run only when `LIVE_AZURE_OPENAI` is exactly `1`; otherwise they are skipped, also in a plain `dotnet test`.
+The live tests send real questions to your Azure OpenAI deployment. They need the user secrets from step 5, and Docker running (they start their own SQL Server). They run only when `LIVE_AZURE_OPENAI` is exactly `1`; otherwise they are skipped, also in a plain `dotnet test`.
+
+There are 13 live cases. Each run sends one request per case, plus one more for each retry after a 429 or 500. Requests are billed as normal Azure OpenAI usage, although a request blocked by the content filter may not be billed.
 
 ```bash
 LIVE_AZURE_OPENAI=1 dotnet test tests/SafeNlToSql.IntegrationTests --filter "Category=LiveAzureOpenAI"

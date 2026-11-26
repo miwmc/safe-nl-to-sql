@@ -142,6 +142,23 @@ public class SearchServiceTests
     }
 
     [Fact]
+    public async Task Generator_refusal_is_rejected_as_ContentFiltered_without_executing()
+    {
+        var generator = StubSqlGenerator.Throwing(new GeneratorRefusedException("LEAK-SENTINEL"));
+        var executor = StubQueryExecutor.Returning(QueryResult.Success(SomeRows));
+
+        var result = await CreateService(generator, executor).SearchAsync(Question, CancellationToken.None);
+
+        Assert.Equal(SearchOutcome.Rejected, result.Outcome);
+        // The fixed text, and nothing from the exception.
+        Assert.Equal("The question was blocked by the content filter", result.Reason);
+        Assert.Equal(SearchReasons.ContentFiltered, result.Reason);
+        Assert.Null(result.Sql);
+        Assert.Empty(result.Rows);
+        Assert.Empty(executor.ExecutedSql);
+    }
+
+    [Fact]
     public async Task Generator_returning_null_returns_GeneratorUnavailable()
     {
         // The return type is not nullable, but nothing enforces that at runtime.

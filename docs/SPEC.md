@@ -51,7 +51,7 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 ## LLM generation
 - `ISqlGenerator.GenerateAsync(string question, CancellationToken ct)` returns SQL text.
 - The Azure OpenAI implementation sends the schema (allowed columns only) and the rules in a system prompt, and asks for a single T-SQL SELECT or the literal `NO_QUERY` when the question cannot be answered.
-- It uses the Responses API on the Azure v1 endpoint with `store: false`. A response whose status is not `completed` is a generator failure (503), never SQL: a truncated query can still be valid and broader than the question. The model output is never stripped or repaired.
+- It uses the Responses API on the Azure v1 endpoint with `store: false`. A response whose status is not `completed` is never SQL; it is a generator failure (503), unless the content filter caused it (see Defence in depth): a truncated query can still be valid and broader than the question. The model output is never stripped or repaired.
 - The generator is registered only when the `AzureOpenAI` configuration section exists, and startup fails when that section is incomplete.
 - The question is never logged. The generated SQL is logged at Information and can contain literal values taken from the question. A failed request is reported with its HTTP status and Azure's error code only, never the server's error message.
 - `NO_QUERY` maps to an empty, rejected result with a reason.
@@ -61,6 +61,7 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 1. Prompt: tells the model the rules (can be ignored by the model).
 2. SqlGuard: parses and enforces the rules in code.
 3. Database: the API connects as `nl_search_reader`, which has SELECT on the six allowed columns of dbo.Certificates (not ClientName) and nothing else, so even if 1 and 2 fail, the database refuses ClientName and other tables.
+4. Content filter, outside our code: Azure OpenAI can block a question or the model's answer. Nothing relies on it. A block (HTTP 400 with code `content_filter`, or a response left incomplete by the filter) returns 200 rejected with the reason `ContentFiltered`, because a retry cannot help.
 
 Known limitation: the guard can approve a query that the database denies (error 230). The reader only has column-level SELECT, and when a table reference uses no allowed column anywhere in its scope, SQL Server asks for SELECT on every column of the table. Examples: a bare `SELECT COUNT(*) FROM dbo.Certificates`, `COUNT(1)`, `SELECT TOP 1 1 ...`, or `EXISTS (SELECT 1 FROM dbo.Certificates)` with no inner filter. This is the fail-closed direction, and the guard deliberately does not copy SQL Server's permission rules: both layers fail closed and need not agree. `COUNT(*)` with a filter on an allowed column works.
 

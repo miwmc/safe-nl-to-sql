@@ -20,6 +20,12 @@ public sealed class SearchService(
         {
             text = await generator.GenerateAsync(question, ct);
         }
+        catch (GeneratorRefusedException ex)
+        {
+            // Asking again cannot help, so this is a rejection and not a failure. Only the fixed reason is returned.
+            logger.LogWarning("The SQL generator refused the question: {Detail}", ex.Message);
+            return SearchResult.Rejected(SearchReasons.ContentFiltered);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             // Logged for the operator only: the message may contain model output, so it never reaches the result.

@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using SafeNlToSql.Application;
 using SafeNlToSql.Infrastructure;
 
 namespace SafeNlToSql.UnitTests.SqlGeneration;
@@ -88,19 +89,70 @@ public class AzureOpenAiSqlGeneratorTests
         Assert.Equal(fenced, text);
     }
 
-    [Theory]
-    [InlineData("max_output_tokens")]
-    [InlineData("content_filter")]
-    public async Task Incomplete_response_throws_without_partial_output(string reason)
+    // A failure, not a refusal: the answer was cut off by our own token limit.
+    [Fact]
+    public async Task Response_cut_off_by_max_output_tokens_is_a_failure_without_partial_output()
     {
-        var generator = Generator(FakeResponsesHandler.Returning(Sql, "incomplete", reason));
+        var generator = Generator(FakeResponsesHandler.Returning(Sql, "incomplete", "max_output_tokens"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => generator.GenerateAsync(Question, CancellationToken.None));
 
-        Assert.Contains(reason, exception.Message);
+        Assert.Contains("max_output_tokens", exception.Message);
         Assert.DoesNotContain(Sql, exception.ToString());
         Assert.DoesNotContain(_logger.Entries, e => e.Message.Contains(Sql, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Response_cut_off_by_content_filter_is_a_refusal_without_partial_output()
+    {
+        var generator = Generator(FakeResponsesHandler.Returning(Sql, "incomplete", "content_filter"));
+
+        var exception = await Assert.ThrowsAsync<GeneratorRefusedException>(
+            () => generator.GenerateAsync(Question, CancellationToken.None));
+
+        Assert.Contains("content_filter", exception.Message);
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(Sql, exception.ToString());
+        Assert.DoesNotContain(_logger.Entries, e => e.Message.Contains(Sql, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Http_400_content_filter_is_a_refusal_without_server_message()
+    {
+        var handler = FakeResponsesHandler.Failing(
+            HttpStatusCode.BadRequest,
+            body: """{"error":{"message":"MARKER-SENTINEL","type":"invalid_request_error","param":"prompt","code":"content_filter","content_filters":[{"detail":"MARKER-SENTINEL"}]}}""");
+        var generator = Generator(handler);
+
+        var exception = await Assert.ThrowsAsync<GeneratorRefusedException>(
+            () => generator.GenerateAsync(Question, CancellationToken.None));
+
+        Assert.Equal("Azure OpenAI request failed with HTTP 400 (code content_filter)", exception.Message);
+        Assert.DoesNotContain("MARKER-SENTINEL", exception.ToString());
+        Assert.Null(exception.InnerException);
+        Assert.Empty(exception.Data);
+        Assert.Single(handler.Requests);
+    }
+
+    // Only HTTP 400 with exactly this code is a refusal. Everything else stays a failure.
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"invalid_request_error"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"DeploymentNotFound"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"content_filter_other"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"code":"Content_Filter"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"message":"content_filter"}}""")]
+    [InlineData(HttpStatusCode.BadRequest, "content_filter")]
+    [InlineData(HttpStatusCode.Forbidden, """{"error":{"code":"content_filter"}}""")]
+    [InlineData(HttpStatusCode.InternalServerError, """{"error":{"code":"content_filter"}}""")]
+    public async Task Other_errors_are_failures_and_not_refusals(HttpStatusCode status, string body)
+    {
+        var generator = Generator(FakeResponsesHandler.Failing(status, body: body));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            () => generator.GenerateAsync(Question, CancellationToken.None));
+
+        Assert.Equal(status, exception.StatusCode);
     }
 
     [Theory]

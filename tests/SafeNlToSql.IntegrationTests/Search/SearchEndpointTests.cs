@@ -132,6 +132,20 @@ public class SearchEndpointTests(DatabaseFixture db)
     }
 
     [Fact]
+    public async Task Generator_refusal_returns_200_rejected_ContentFiltered()
+    {
+        using var factory = new SearchApiFactory(db);
+        factory.Generator.AddRefusal(Question, Sentinel);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/search", new { question = Question });
+        var body = await response.Content.ReadAsStringAsync();
+
+        AssertRejected(response.StatusCode, body, SearchReasons.ContentFiltered);
+        AssertNoSentinel(body);
+    }
+
+    [Fact]
     public async Task Blocked_query_returns_rejected_QueryTimeout()
     {
         using var factory = new SearchApiFactory(db);
