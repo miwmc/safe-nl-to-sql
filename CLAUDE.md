@@ -14,7 +14,7 @@
 - src/SafeNlToSql.Api (endpoints, DI), src/SafeNlToSql.Application (SqlGuard, ISqlGenerator, use case), src/SafeNlToSql.Infrastructure (Azure OpenAI, Dapper, seed). Api -> Application <- Infrastructure; Application never references Infrastructure.
 - tests/SafeNlToSql.UnitTests (refs Application, Infrastructure) and tests/SafeNlToSql.IntegrationTests (refs Api, WebApplicationFactory).
 - SqlGuard parses SQL with Microsoft.SqlServer.TransactSql.ScriptDom (TSql160Parser). No regex validation.
-- Tests never call the LLM: unit tests use stubs, integration tests use FakeSqlGenerator.
+- Tests never call the LLM: unit tests use stubs, integration tests use FakeSqlGenerator. Live tests in IntegrationTests/LiveAzureOpenAi run only when the user sets LIVE_AZURE_OPENAI=1; never set it yourself.
 - Target net10.0, SDK pinned in global.json. Nullable enabled, warnings as errors in src.
 - Async/await for all I/O; never .Result or .Wait().
 - Secrets only via IConfiguration (dotnet user-secrets locally, env vars in CI).

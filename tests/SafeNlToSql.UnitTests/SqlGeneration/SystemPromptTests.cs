@@ -1,3 +1,4 @@
+using SafeNlToSql.Application;
 using SafeNlToSql.Infrastructure;
 
 namespace SafeNlToSql.UnitTests.SqlGeneration;
@@ -36,4 +37,25 @@ public class SystemPromptTests
     {
         Assert.Contains("NO_QUERY", SystemPrompt.Text, StringComparison.Ordinal);
     }
+
+    // The model copies examples, so one that SqlGuard rejects would teach it to be rejected.
+    [Fact]
+    public void Every_example_query_passes_SqlGuard()
+    {
+        var lines = SystemPrompt.Text.Split('\n').Select(line => line.Trim()).ToList();
+        var examples = lines.Where(IsExampleQuery).ToList();
+
+        Assert.NotEmpty(examples);
+        // An example is a query on its own line. One written inside a sentence would not be checked.
+        Assert.DoesNotContain(
+            lines, line => !IsExampleQuery(line) && line.Contains("FROM dbo.Certificates", StringComparison.Ordinal));
+        var guard = new SqlGuard();
+        Assert.All(examples, example =>
+        {
+            var verdict = guard.Validate(example);
+            Assert.True(verdict.IsAllowed, $"{verdict.Reason}: {example}");
+        });
+    }
+
+    private static bool IsExampleQuery(string line) => line.StartsWith("SELECT ", StringComparison.Ordinal);
 }

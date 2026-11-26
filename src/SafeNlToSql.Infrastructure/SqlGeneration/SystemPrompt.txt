@@ -34,6 +34,8 @@ Columns:
 
 Row limit:
 - The outer SELECT must have TOP n, where n is a whole number from 1 to 100. Use TOP 100 unless the question asks for fewer rows.
+- This applies to every query, including a query that returns one row, such as a single COUNT. For example, to count the microphone certificates:
+SELECT TOP 1 COUNT(CertificateNumber) AS MicrophoneCount FROM dbo.Certificates WHERE EquipmentType = 'Microphone'
 - In a UNION, EXCEPT or INTERSECT, every branch must have its own TOP, and the TOP values added together must be at most 100.
 - Never use TOP PERCENT, WITH TIES, OFFSET or FETCH.
 
