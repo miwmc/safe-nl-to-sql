@@ -89,6 +89,27 @@ public class AzureOpenAiRegistrationTests
         Assert.DoesNotContain(ApiKey, exception.ToString());
     }
 
+    [Fact]
+    public void Absent_section_uses_the_other_generator()
+    {
+        using var provider = Register([]);
+
+        Assert.IsType<StandInGenerator>(provider.GetRequiredService<ISqlGenerator>());
+    }
+
+    // WebApplicationFactory changes the configuration sources when the host is built, after Program has
+    // registered its services.
+    [Fact]
+    public void Section_is_read_when_the_generator_is_resolved_not_when_registered()
+    {
+        using var configuration = new ConfigurationManager();
+        using var provider = Services(configuration).BuildServiceProvider();
+
+        configuration.AddInMemoryCollection(Settings());
+
+        Assert.IsType<AzureOpenAiSqlGenerator>(provider.GetRequiredService<ISqlGenerator>());
+    }
+
     /// <summary>A complete section, with one key replaced, or removed when the value is null.</summary>
     private static Dictionary<string, string?> Settings(string? key = null, string? value = null)
     {
@@ -114,12 +135,27 @@ public class AzureOpenAiRegistrationTests
         return settings;
     }
 
+    /// <summary>Registers, then resolves the generator once, as Program does at startup.</summary>
     private static ServiceProvider Register(Dictionary<string, string?> settings)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var provider = Services(configuration).BuildServiceProvider();
+        provider.GetRequiredService<ISqlGenerator>();
+        return provider;
+    }
+
+    private static ServiceCollection Services(IConfiguration configuration)
+    {
         var services = new ServiceCollection();
+        services.AddSingleton(configuration);
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
-        services.AddAzureOpenAiSqlGenerator(configuration);
-        return services.BuildServiceProvider();
+        services.AddSqlGenerator(_ => new StandInGenerator());
+        return services;
+    }
+
+    private sealed class StandInGenerator : ISqlGenerator
+    {
+        public Task<string> GenerateAsync(string question, CancellationToken ct) =>
+            throw new NotSupportedException();
     }
 }

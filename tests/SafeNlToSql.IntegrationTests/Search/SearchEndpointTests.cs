@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SafeNlToSql.Api;
 using SafeNlToSql.Application;
 using SafeNlToSql.IntegrationTests.Database;
 
@@ -222,6 +223,9 @@ public class SearchEndpointTests(DatabaseFixture db)
     {
         using var factory = new SearchApiFactory(db, useFakeGenerator: false);
         using var client = factory.CreateClient();
+
+        // Checked before posting: with any other generator, the request could reach a real model.
+        Assert.IsType<NotConfiguredSqlGenerator>(factory.Services.GetRequiredService<ISqlGenerator>());
 
         using var response = await client.PostAsJsonAsync("/search", new { question = Question });
 

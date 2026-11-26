@@ -35,11 +35,32 @@ public static class DependencyInjection
     }
 
     /// <summary>
-    /// Registers the Azure OpenAI generator. Throws when the AzureOpenAI section is incomplete or invalid, so
-    /// the app fails at startup. The messages name the setting and never include a value: one is a secret.
+    /// Registers the SQL generator: Azure OpenAI when the AzureOpenAI section exists, otherwise the one from
+    /// <paramref name="whenNotConfigured"/>. The section is read from the built host's configuration, when the
+    /// generator is first resolved. An incomplete or invalid section throws then, so the app resolves the
+    /// generator once at startup.
     /// </summary>
-    public static IServiceCollection AddAzureOpenAiSqlGenerator(
-        this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddSqlGenerator(
+        this IServiceCollection services, Func<IServiceProvider, ISqlGenerator> whenNotConfigured)
+    {
+        // Only the Azure generator asks for these, so they are not validated unless it is created.
+        services.AddSingleton(sp => ReadAzureOpenAiOptions(sp.GetRequiredService<IConfiguration>()));
+
+        services.AddSingleton<ISqlGenerator>(sp =>
+            sp.GetRequiredService<IConfiguration>().GetSection(AzureOpenAiOptions.SectionName).Exists()
+                ? new AzureOpenAiSqlGenerator(
+                    sp.GetRequiredService<AzureOpenAiOptions>(),
+                    sp.GetRequiredService<ILogger<AzureOpenAiSqlGenerator>>())
+                : whenNotConfigured(sp));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Throws when the AzureOpenAI section is incomplete or invalid. The messages name the setting and never
+    /// include a value: one is a secret.
+    /// </summary>
+    private static AzureOpenAiOptions ReadAzureOpenAiOptions(IConfiguration configuration)
     {
         var options = configuration.GetSection(AzureOpenAiOptions.SectionName).Get<AzureOpenAiOptions>()
             ?? new AzureOpenAiOptions();
@@ -54,11 +75,7 @@ public static class DependencyInjection
             options.MaxOutputTokens >= MinOutputTokens,
             $"AzureOpenAI:MaxOutputTokens must be at least {MinOutputTokens}.");
 
-        services.AddSingleton(options);
-        services.AddSingleton<ISqlGenerator>(sp =>
-            new AzureOpenAiSqlGenerator(options, sp.GetRequiredService<ILogger<AzureOpenAiSqlGenerator>>()));
-
-        return services;
+        return options;
     }
 
     /// <summary>Accepts the v1 endpoint with or without the trailing slash and returns it with the slash.</summary>

@@ -81,10 +81,14 @@ public class LiveSearchTests(DatabaseFixture db, ITestOutputHelper output)
         using var baseFactory = new SearchApiFactory(db, useFakeGenerator: false);
         using var factory = baseFactory.WithWebHostBuilder(builder =>
         {
-            // In memory only. The Production host does not read user-secrets itself.
-            foreach (var (key, value) in LiveAzureOpenAiConfig.Settings)
+            // The factory removes the machine's configuration sources, so a live host gets its settings only
+            // from here. In memory only. UseSetting, because Program reads the section while it registers services.
+            if (LiveAzureOpenAiConfig.IsEnabled)
             {
-                builder.UseSetting(key, value);
+                foreach (var (key, value) in LiveAzureOpenAiConfig.Settings)
+                {
+                    builder.UseSetting(key, value);
+                }
             }
 
             builder.ConfigureTestServices(services => services.AddSingleton<ILoggerProvider>(logs));

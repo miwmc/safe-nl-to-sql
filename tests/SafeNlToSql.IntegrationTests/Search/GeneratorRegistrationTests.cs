@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SafeNlToSql.Application;
 using SafeNlToSql.Infrastructure;
@@ -36,6 +37,18 @@ public class GeneratorRegistrationTests(DatabaseFixture db)
         var exception = Assert.Throws<InvalidOperationException>(() => partial.CreateClient());
 
         Assert.Contains("AzureOpenAI:ApiKey", exception.Message);
+    }
+
+    // The section is passed with UseSetting, so the host really has it. Only the replaced generator keeps
+    // it from being validated.
+    [Fact]
+    public void Fake_generator_host_never_validates_Azure_settings()
+    {
+        using var factory = new SearchApiFactory(db);
+        using var partial = factory.WithWebHostBuilder(UsePartialSection);
+
+        Assert.Same(factory.Generator, partial.Services.GetRequiredService<ISqlGenerator>());
+        Assert.True(partial.Services.GetRequiredService<IConfiguration>().GetSection("AzureOpenAI").Exists());
     }
 
     private static void UsePartialSection(IWebHostBuilder builder)

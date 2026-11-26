@@ -52,7 +52,7 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 - `ISqlGenerator.GenerateAsync(string question, CancellationToken ct)` returns SQL text.
 - The Azure OpenAI implementation sends the schema (allowed columns only) and the rules in a system prompt, and asks for a single T-SQL SELECT or the literal `NO_QUERY` when the question cannot be answered.
 - It uses the Responses API on the Azure v1 endpoint with `store: false`. A response whose status is not `completed` is never SQL; it is a generator failure (503), unless the content filter caused it (see Defence in depth): a truncated query can still be valid and broader than the question. The model output is never stripped or repaired.
-- The generator is registered only when the `AzureOpenAI` configuration section exists, and startup fails when that section is incomplete.
+- The Azure generator is used only when the `AzureOpenAI` section exists, and startup fails when that section is incomplete.
 - The question is never logged. The generated SQL is logged at Information and can contain literal values taken from the question. A failed request is reported with its HTTP status and Azure's error code only, never the server's error message.
 - `NO_QUERY` maps to an empty, rejected result with a reason.
 - A `FakeSqlGenerator` returns canned SQL per question for tests.
@@ -66,6 +66,8 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 Known limitation: the guard can approve a query that the database denies (error 230). The reader only has column-level SELECT, and when a table reference uses no allowed column anywhere in its scope, SQL Server asks for SELECT on every column of the table. Examples: a bare `SELECT COUNT(*) FROM dbo.Certificates`, `COUNT(1)`, `SELECT TOP 1 1 ...`, or `EXISTS (SELECT 1 FROM dbo.Certificates)` with no inner filter. This is the fail-closed direction, and the guard deliberately does not copy SQL Server's permission rules: both layers fail closed and need not agree. `COUNT(*)` with a filter on an allowed column works.
 
 Known limitation: API key auth; Entra ID with managed identity would be the production choice.
+
+Known limitation: test hosts ignore unprefixed and `DOTNET_` `AzureOpenAI` variables and user-secrets, but `ASPNETCORE_AzureOpenAI__` variables still reach them through WebApplicationFactory's command-line arguments; do not set them.
 
 ## Query errors
 The guard can also approve a query that SQL Server cannot run. The executor returns `QueryResult.Failed(QueryExecutionReasons.QueryFailed)`, an empty rejected result with a fixed reason, only when both are true:
