@@ -51,6 +51,9 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 ## LLM generation
 - `ISqlGenerator.GenerateAsync(string question, CancellationToken ct)` returns SQL text.
 - The Azure OpenAI implementation sends the schema (allowed columns only) and the rules in a system prompt, and asks for a single T-SQL SELECT or the literal `NO_QUERY` when the question cannot be answered.
+- It uses the Responses API on the Azure v1 endpoint with `store: false`. A response whose status is not `completed` is a generator failure (503), never SQL: a truncated query can still be valid and broader than the question. The model output is never stripped or repaired.
+- The generator is registered only when the `AzureOpenAI` configuration section exists, and startup fails when that section is incomplete.
+- The question is never logged. A failed request is reported with its HTTP status and Azure's error code only, never the server's error message.
 - `NO_QUERY` maps to an empty, rejected result with a reason.
 - A `FakeSqlGenerator` returns canned SQL per question for tests.
 

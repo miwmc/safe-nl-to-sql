@@ -7,7 +7,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<SqlGuard>();
-builder.Services.AddSingleton<ISqlGenerator, NotConfiguredSqlGenerator>();
+
+// The presence of the section turns the Azure generator on. A partial section fails startup.
+if (builder.Configuration.GetSection(AzureOpenAiOptions.SectionName).Exists())
+{
+    builder.Services.AddAzureOpenAiSqlGenerator(builder.Configuration);
+}
+else
+{
+    builder.Services.AddSingleton<ISqlGenerator, NotConfiguredSqlGenerator>();
+}
+
 builder.Services.AddSingleton<SearchService>();
 builder.Services.AddProblemDetails();
 

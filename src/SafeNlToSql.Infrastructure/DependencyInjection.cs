@@ -8,6 +8,9 @@ namespace SafeNlToSql.Infrastructure;
 
 public static class DependencyInjection
 {
+    // The smallest max_output_tokens the Responses API accepts.
+    private const int MinOutputTokens = 16;
+
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("Reader");
@@ -29,5 +32,62 @@ public static class DependencyInjection
                 sp.GetRequiredService<ILogger<DapperQueryExecutor>>()));
 
         return services;
+    }
+
+    /// <summary>
+    /// Registers the Azure OpenAI generator. Throws when the AzureOpenAI section is incomplete or invalid, so
+    /// the app fails at startup. The messages name the setting and never include a value: one is a secret.
+    /// </summary>
+    public static IServiceCollection AddAzureOpenAiSqlGenerator(
+        this IServiceCollection services, IConfiguration configuration)
+    {
+        var options = configuration.GetSection(AzureOpenAiOptions.SectionName).Get<AzureOpenAiOptions>()
+            ?? new AzureOpenAiOptions();
+
+        options.Endpoint = NormaliseAzureEndpoint(options.Endpoint);
+        Require(!string.IsNullOrWhiteSpace(options.Deployment), "AzureOpenAI:Deployment is not configured.");
+        Require(
+            !string.IsNullOrWhiteSpace(options.ApiKey),
+            "AzureOpenAI:ApiKey is not configured. Set it with dotnet user-secrets locally.");
+        Require(options.TimeoutSeconds > 0, "AzureOpenAI:TimeoutSeconds must be greater than 0.");
+        Require(
+            options.MaxOutputTokens >= MinOutputTokens,
+            $"AzureOpenAI:MaxOutputTokens must be at least {MinOutputTokens}.");
+
+        services.AddSingleton(options);
+        services.AddSingleton<ISqlGenerator>(sp =>
+            new AzureOpenAiSqlGenerator(options, sp.GetRequiredService<ILogger<AzureOpenAiSqlGenerator>>()));
+
+        return services;
+    }
+
+    /// <summary>Accepts the v1 endpoint with or without the trailing slash and returns it with the slash.</summary>
+    private static string NormaliseAzureEndpoint(string endpoint)
+    {
+        const string message = "AzureOpenAI:Endpoint must be an absolute https URI ending with /openai/v1/";
+
+        Require(
+            Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+                && uri.Scheme == Uri.UriSchemeHttps
+                && uri.Query.Length == 0
+                && uri.Fragment.Length == 0,
+            message);
+
+        var url = uri!.GetLeftPart(UriPartial.Path);
+        if (!url.EndsWith('/'))
+        {
+            url += "/";
+        }
+
+        Require(url.EndsWith("/openai/v1/", StringComparison.Ordinal), message);
+        return url;
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
     }
 }
