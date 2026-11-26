@@ -53,7 +53,7 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 - The Azure OpenAI implementation sends the schema (allowed columns only) and the rules in a system prompt, and asks for a single T-SQL SELECT or the literal `NO_QUERY` when the question cannot be answered.
 - It uses the Responses API on the Azure v1 endpoint with `store: false`. A response whose status is not `completed` is a generator failure (503), never SQL: a truncated query can still be valid and broader than the question. The model output is never stripped or repaired.
 - The generator is registered only when the `AzureOpenAI` configuration section exists, and startup fails when that section is incomplete.
-- The question is never logged. A failed request is reported with its HTTP status and Azure's error code only, never the server's error message.
+- The question is never logged. The generated SQL is logged at Information and can contain literal values taken from the question. A failed request is reported with its HTTP status and Azure's error code only, never the server's error message.
 - `NO_QUERY` maps to an empty, rejected result with a reason.
 - A `FakeSqlGenerator` returns canned SQL per question for tests.
 
@@ -63,6 +63,8 @@ Return a result type such as `GuardResult(bool IsAllowed, string? Reason)`.
 3. Database: the API connects as `nl_search_reader`, which has SELECT on the six allowed columns of dbo.Certificates (not ClientName) and nothing else, so even if 1 and 2 fail, the database refuses ClientName and other tables.
 
 Known limitation: the guard can approve a query that the database denies (error 230). The reader only has column-level SELECT, and when a table reference uses no allowed column anywhere in its scope, SQL Server asks for SELECT on every column of the table. Examples: a bare `SELECT COUNT(*) FROM dbo.Certificates`, `COUNT(1)`, `SELECT TOP 1 1 ...`, or `EXISTS (SELECT 1 FROM dbo.Certificates)` with no inner filter. This is the fail-closed direction, and the guard deliberately does not copy SQL Server's permission rules: both layers fail closed and need not agree. `COUNT(*)` with a filter on an allowed column works.
+
+Known limitation: API key auth; Entra ID with managed identity would be the production choice.
 
 ## Query errors
 The guard can also approve a query that SQL Server cannot run. The executor returns `QueryResult.Failed(QueryExecutionReasons.QueryFailed)`, an empty rejected result with a fixed reason, only when both are true:
@@ -78,7 +80,7 @@ The list is deliberately small. It grows only when 5b shows the model producing 
 2. SqlGuard rules 1-3, tests first.
 3. SqlGuard rules 4-8, tests first.
 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time. The executor maps database errors 229 and 230 to `QueryResult.Failed(QueryExecutionReasons.QueryNotPermitted)`, an empty result with a reason.
-5. ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`, `QueryFailed`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
+5. (Done) ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`, `QueryFailed`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
 6. README: what it does, how to run, and "How I built this with Claude Code".
 
 ## Out of scope
