@@ -28,8 +28,9 @@ public class AzureOpenAiRegistrationTests
 
     [Theory]
     [InlineData("TimeoutSeconds", 1)]
+    [InlineData("TimeoutSeconds", 300)]
     [InlineData("MaxOutputTokens", 16)]
-    public void Minimum_valid_value_is_accepted(string key, int value)
+    public void Boundary_value_is_accepted(string key, int value)
     {
         using var provider = Register(Settings(key, value.ToString()));
 
@@ -79,6 +80,7 @@ public class AzureOpenAiRegistrationTests
     [InlineData("ApiKey", "   ")]
     [InlineData("TimeoutSeconds", "0")]
     [InlineData("TimeoutSeconds", "-1")]
+    [InlineData("TimeoutSeconds", "301")]
     [InlineData("MaxOutputTokens", "0")]
     [InlineData("MaxOutputTokens", "15")]
     public void Incomplete_or_invalid_section_throws_naming_the_key(string key, string? value)

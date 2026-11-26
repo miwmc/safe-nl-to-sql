@@ -151,7 +151,7 @@ public class SearchServiceTests
 
         Assert.Equal(SearchOutcome.Rejected, result.Outcome);
         // The fixed text, and nothing from the exception.
-        Assert.Equal("The question was blocked by the content filter", result.Reason);
+        Assert.Equal("The request was blocked by the content filter", result.Reason);
         Assert.Equal(SearchReasons.ContentFiltered, result.Reason);
         Assert.Null(result.Sql);
         Assert.Empty(result.Rows);

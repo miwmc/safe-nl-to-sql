@@ -69,6 +69,8 @@ Known limitation: API key auth; Entra ID with managed identity would be the prod
 
 Known limitation: test hosts ignore unprefixed and `DOTNET_` `AzureOpenAI` variables and user-secrets, but `ASPNETCORE_AzureOpenAI__` variables still reach them through WebApplicationFactory's command-line arguments; do not set them.
 
+Known limitation: if the generator's time budget runs out while the SDK waits to retry a failed request, such as a 429, only a timeout is logged, without that request's HTTP status or Azure error code.
+
 ## Query errors
 The guard can also approve a query that SQL Server cannot run. The executor returns `QueryResult.Failed(QueryExecutionReasons.QueryFailed)`, an empty rejected result with a fixed reason, only when both are true:
 - the error is raised while running the approved SQL or reading its rows, not while opening the connection or setting up the session;

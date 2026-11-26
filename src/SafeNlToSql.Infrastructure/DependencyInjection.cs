@@ -11,6 +11,8 @@ public static class DependencyInjection
     // The smallest max_output_tokens the Responses API accepts.
     private const int MinOutputTokens = 16;
 
+    private const int MaxTimeoutSeconds = 300;
+
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("Reader");
@@ -71,6 +73,10 @@ public static class DependencyInjection
             !string.IsNullOrWhiteSpace(options.ApiKey),
             "AzureOpenAI:ApiKey is not configured. Set it with dotnet user-secrets locally.");
         Require(options.TimeoutSeconds > 0, "AzureOpenAI:TimeoutSeconds must be greater than 0.");
+        // A much larger value, such as milliseconds given by mistake, would only fail later, on each request.
+        Require(
+            options.TimeoutSeconds <= MaxTimeoutSeconds,
+            $"AzureOpenAI:TimeoutSeconds must be at most {MaxTimeoutSeconds}.");
         Require(
             options.MaxOutputTokens >= MinOutputTokens,
             $"AzureOpenAI:MaxOutputTokens must be at least {MinOutputTokens}.");

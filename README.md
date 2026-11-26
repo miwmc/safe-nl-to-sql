@@ -56,7 +56,7 @@ dotnet user-secrets set "ConnectionStrings:Reader" "Server=localhost,1433;Databa
 
 The API reads the reader connection string at startup and does not start without it.
 
-5. Store the Azure OpenAI settings as user secrets. First the endpoint and the deployment, replacing each placeholder with your own value:
+5. Store the Azure OpenAI settings as user secrets. The generator is tested with `gpt-4.1-mini`. Reasoning models are not supported (it sends temperature 0 and a 300 token output limit by default). First the endpoint and the deployment, replacing each placeholder with your own value:
 
 ```bash
 dotnet user-secrets set "AzureOpenAI:Endpoint" "https://<resource>.openai.azure.com/openai/v1/" --project src/SafeNlToSql.Api
@@ -87,7 +87,7 @@ curl -X POST http://localhost:5140/search \
 
 The live tests send real questions to your Azure OpenAI deployment. They need the user secrets from step 5, and Docker running (they start their own SQL Server). They run only when `LIVE_AZURE_OPENAI` is exactly `1`; otherwise they are skipped, also in a plain `dotnet test`.
 
-There are 13 live cases. Each run sends one request per case, plus one more for each retry after a 429 or 500. Requests are billed as normal Azure OpenAI usage, although a request blocked by the content filter may not be billed.
+There are 13 live cases. Each run sends one request per case, plus one more when the SDK retries a transient failure. Requests are billed as normal Azure OpenAI usage, although a request blocked by the content filter may not be billed.
 
 ```bash
 LIVE_AZURE_OPENAI=1 dotnet test tests/SafeNlToSql.IntegrationTests --filter "Category=LiveAzureOpenAI"
