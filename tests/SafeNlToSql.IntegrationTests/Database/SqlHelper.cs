@@ -38,7 +38,11 @@ internal static class SqlHelper
     }
 
     /// <summary>Asserts that SQL Server refuses the statement with exactly this error number.</summary>
-    public static async Task AssertDeniedAsync(string connectionString, string sql, int expectedNumber)
+    public static Task AssertDeniedAsync(string connectionString, string sql, int expectedNumber) =>
+        AssertSqlErrorAsync(connectionString, sql, expectedNumber);
+
+    /// <summary>Asserts that running the statement fails with exactly this SQL Server error number.</summary>
+    public static async Task AssertSqlErrorAsync(string connectionString, string sql, int expectedNumber)
     {
         var exception = await Assert.ThrowsAnyAsync<SqlException>(() => ExecuteAsync(connectionString, sql));
         Assert.Equal(expectedNumber, exception.Number);

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SafeNlToSql.Application;
 
@@ -22,7 +23,10 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddSingleton<IQueryExecutor>(sp =>
-            new DapperQueryExecutor(connectionString, sp.GetRequiredService<IOptions<DatabaseOptions>>()));
+            new DapperQueryExecutor(
+                connectionString,
+                sp.GetRequiredService<IOptions<DatabaseOptions>>(),
+                sp.GetRequiredService<ILogger<DapperQueryExecutor>>()));
 
         return services;
     }

@@ -12,14 +12,15 @@ namespace SafeNlToSql.IntegrationTests.Search;
 /// Runs the real Program against the test container, connected as nl_search_reader. Only configuration
 /// and the ISqlGenerator registration are replaced.
 /// </summary>
-public sealed class SearchApiFactory(DatabaseFixture db, bool useFakeGenerator = true) : WebApplicationFactory<Program>
+public sealed class SearchApiFactory(DatabaseFixture db, bool useFakeGenerator = true, string environment = "Production")
+    : WebApplicationFactory<Program>
 {
     public FakeSqlGenerator Generator { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Production is what clients see: no developer exception page, and no local user-secrets.
-        builder.UseEnvironment("Production");
+        // The default is Production, which is what clients see: no developer exception page, and no local user-secrets.
+        builder.UseEnvironment(environment);
 
         // UseSetting, because AddInfrastructure reads the connection string while Program registers services.
         builder.UseSetting("ConnectionStrings:Reader", db.ReaderConnectionString);

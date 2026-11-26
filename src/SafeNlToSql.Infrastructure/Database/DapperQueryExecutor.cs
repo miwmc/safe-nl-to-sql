@@ -1,14 +1,16 @@
 using System.Data.Common;
 using Dapper;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SafeNlToSql.Application;
 
 namespace SafeNlToSql.Infrastructure;
 
 /// <summary>
-/// Runs SQL that SqlGuard approved, over the nl_search_reader connection. A timeout and a permission denial
-/// (229/230) become a failed <see cref="QueryResult"/> with a reason; other SqlExceptions propagate.
+/// Runs SQL that SqlGuard approved, over the nl_search_reader connection. A timeout, a permission denial
+/// (229/230) and a listed error from the query itself become a failed <see cref="QueryResult"/> with a reason;
+/// other SqlExceptions, including connection and login failures, propagate.
 /// </summary>
 public sealed class DapperQueryExecutor : IQueryExecutor
 {
@@ -16,13 +18,29 @@ public sealed class DapperQueryExecutor : IQueryExecutor
     private const int ObjectPermissionDeniedErrorNumber = 229;
     private const int ColumnPermissionDeniedErrorNumber = 230;
 
+    // Errors caused by the query itself. Deliberately small (see docs/SPEC.md): any other number propagates.
+    // Severity cannot be used instead: invalid object names and lock timeouts share severity 16 with these.
+    private static readonly HashSet<int> QueryErrorNumbers =
+    [
+        241, // date or time conversion from a string failed
+        242, // conversion gave an out-of-range value
+        245, // conversion of a value failed
+        8114, // error converting a data type
+        8115, // arithmetic overflow
+        8120, // column is neither aggregated nor in GROUP BY
+        8134, // divide by zero
+    ];
+
     private readonly string _connectionString;
     private readonly int _commandTimeoutSeconds;
+    private readonly ILogger<DapperQueryExecutor> _logger;
 
-    public DapperQueryExecutor(string connectionString, IOptions<DatabaseOptions> options)
+    public DapperQueryExecutor(
+        string connectionString, IOptions<DatabaseOptions> options, ILogger<DapperQueryExecutor> logger)
     {
         _connectionString = connectionString;
         _commandTimeoutSeconds = options.Value.CommandTimeoutSeconds;
+        _logger = logger;
     }
 
     public async Task<QueryResult> ExecuteAsync(ApprovedSql sql, CancellationToken ct)
@@ -38,23 +56,34 @@ public sealed class DapperQueryExecutor : IQueryExecutor
             await connection.ExecuteAsync(new CommandDefinition(
                 "SET QUOTED_IDENTIFIER ON;", commandTimeout: _commandTimeoutSeconds, cancellationToken: ct));
 
-            await using var reader = await connection.ExecuteReaderAsync(
-                new CommandDefinition(sql.Sql, commandTimeout: _commandTimeoutSeconds, cancellationToken: ct));
-
-            var names = UniqueColumnNames(reader);
-            var rows = new List<IReadOnlyDictionary<string, object?>>();
-            while (await reader.ReadAsync(ct))
+            // Its own try: only an error from running the approved SQL or reading its rows can be QueryFailed.
+            try
             {
-                var row = new Dictionary<string, object?>(names.Length);
-                for (var i = 0; i < names.Length; i++)
+                await using var reader = await connection.ExecuteReaderAsync(
+                    new CommandDefinition(sql.Sql, commandTimeout: _commandTimeoutSeconds, cancellationToken: ct));
+
+                var names = UniqueColumnNames(reader);
+                var rows = new List<IReadOnlyDictionary<string, object?>>();
+                while (await reader.ReadAsync(ct))
                 {
-                    row[names[i]] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    var row = new Dictionary<string, object?>(names.Length);
+                    for (var i = 0; i < names.Length; i++)
+                    {
+                        row[names[i]] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    }
+
+                    rows.Add(row);
                 }
 
-                rows.Add(row);
+                return QueryResult.Success(rows);
             }
-
-            return QueryResult.Success(rows);
+            catch (SqlException ex) when (QueryErrorNumbers.Contains(ex.Number))
+            {
+                // The database message can contain values from the query or the data, so it is only logged.
+                // Never retry or repair the query.
+                _logger.LogError(ex, "The database could not run an approved query");
+                return QueryResult.Failed(QueryExecutionReasons.QueryFailed);
+            }
         }
         catch (SqlException ex) when (ex.Number == ClientTimeoutErrorNumber)
         {

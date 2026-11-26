@@ -51,7 +51,6 @@ The unit tests need no database and no LLM. They cover every SqlGuard rule with 
 4. Store the reader connection string as a user secret, using the `READER_PASSWORD` from `.env`:
 
 ```bash
-dotnet user-secrets init --project src/SafeNlToSql.Api
 dotnet user-secrets set "ConnectionStrings:Reader" "Server=localhost,1433;Database=SafeNlToSql;User Id=nl_search_reader;Password=<READER_PASSWORD>;TrustServerCertificate=True" --project src/SafeNlToSql.Api
 ```
 

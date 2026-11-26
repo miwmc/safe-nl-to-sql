@@ -28,6 +28,13 @@ public sealed class SearchService(
             return SearchResult.GeneratorUnavailable();
         }
 
+        // The return type is not nullable, but nothing enforces that at runtime.
+        if (text is null)
+        {
+            logger.LogError("The SQL generator returned null");
+            return SearchResult.GeneratorUnavailable();
+        }
+
         // Trim only to recognise the literal. The guard gets the text exactly as generated.
         if (string.Equals(text.Trim(), NoQueryLiteral, StringComparison.Ordinal))
         {

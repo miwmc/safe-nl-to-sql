@@ -18,7 +18,13 @@ builder.Services.ConfigureHttpJsonOptions(
 var app = builder.Build();
 
 // In every environment, an unexpected exception becomes a generic 500 with no exception text.
-app.UseExceptionHandler();
+// BadHttpRequestException keeps its own status: in Development, a body that cannot be bound is thrown as one.
+app.UseExceptionHandler(new ExceptionHandlerOptions
+{
+    StatusCodeSelector = exception => exception is BadHttpRequestException badRequest
+        ? badRequest.StatusCode
+        : StatusCodes.Status500InternalServerError,
+});
 
 app.MapSearch();
 

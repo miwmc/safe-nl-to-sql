@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SafeNlToSql.Application;
@@ -87,6 +88,40 @@ public class SearchEndpointTests(DatabaseFixture db)
     }
 
     [Fact]
+    public async Task Query_the_database_cannot_run_returns_rejected_QueryFailed()
+    {
+        const string sql = "SELECT TOP 10 EquipmentType, COUNT(CertificateNumber) FROM dbo.Certificates";
+        await SqlHelper.AssertSqlErrorAsync(db.ReaderConnectionString, sql, 8120);
+
+        using var factory = new SearchApiFactory(db);
+        var (status, body) = await AskAsync(factory, sql);
+
+        AssertRejected(status, body, QueryExecutionReasons.QueryFailed);
+    }
+
+    [Fact]
+    public async Task Database_login_failure_returns_500_without_details()
+    {
+        var wrongPassword = new SqlConnectionStringBuilder(db.ReaderConnectionString)
+        {
+            Password = "Wrong-password-1!",
+        }.ConnectionString;
+        using var factory = new SearchApiFactory(db);
+        using var failing = factory.WithWebHostBuilder(
+            builder => builder.UseSetting("ConnectionStrings:Reader", wrongPassword));
+        factory.Generator.Add(Question, AnsweredSql);
+        using var client = failing.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/search", new { question = Question });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Login failed", body);
+        Assert.DoesNotContain(DatabaseFixture.ReaderLogin, body);
+        Assert.DoesNotContain("Exception", body);
+    }
+
+    [Fact]
     public async Task No_query_returns_rejected_with_reason()
     {
         using var factory = new SearchApiFactory(db);
@@ -126,6 +161,24 @@ public class SearchEndpointTests(DatabaseFixture db)
         using var factory = new SearchApiFactory(db);
 
         await AssertBadRequestAsync(factory, json);
+    }
+
+    // A body that cannot be bound. Development is checked too: there binding failures are thrown as
+    // BadHttpRequestException and reach the exception handler.
+    [Theory]
+    [InlineData("Development", """{"question":""")]
+    [InlineData("Development", """{"question":5}""")]
+    [InlineData("Development", "null")]
+    [InlineData("Development", "")]
+    [InlineData("Production", """{"question":""")]
+    [InlineData("Production", """{"question":5}""")]
+    [InlineData("Production", "null")]
+    [InlineData("Production", "")]
+    public async Task Bad_body_returns_400_without_calling_generator(string environment, string body)
+    {
+        using var factory = new SearchApiFactory(db, environment: environment);
+
+        await AssertBadRequestAsync(factory, body);
     }
 
     [Fact]

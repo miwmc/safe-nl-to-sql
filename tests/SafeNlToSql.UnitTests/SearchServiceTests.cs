@@ -142,6 +142,22 @@ public class SearchServiceTests
     }
 
     [Fact]
+    public async Task Generator_returning_null_returns_GeneratorUnavailable()
+    {
+        // The return type is not nullable, but nothing enforces that at runtime.
+        var executor = StubQueryExecutor.Returning(QueryResult.Success(SomeRows));
+
+        var result = await CreateService(StubSqlGenerator.Returning(null!), executor)
+            .SearchAsync(Question, CancellationToken.None);
+
+        Assert.Equal(SearchOutcome.GeneratorUnavailable, result.Outcome);
+        Assert.Null(result.Reason);
+        Assert.Null(result.Sql);
+        Assert.Empty(result.Rows);
+        Assert.Empty(executor.ExecutedSql);
+    }
+
+    [Fact]
     public async Task Generator_cancellation_propagates()
     {
         using var cts = new CancellationTokenSource();
