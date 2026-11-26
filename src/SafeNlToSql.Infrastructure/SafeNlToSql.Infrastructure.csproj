@@ -5,11 +5,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="SqlGeneration\SystemPrompt.txt" LogicalName="SafeNlToSql.Infrastructure.SystemPrompt.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.100" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.15" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.15" />
+    <PackageReference Include="OpenAI" Version="2.15.0" />
   </ItemGroup>
 
 </Project>

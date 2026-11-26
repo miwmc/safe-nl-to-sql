@@ -4,6 +4,11 @@
     <UserSecretsId>fcbf549a-8353-40f2-9f59-5fcb57d88466</UserSecretsId>
   </PropertyGroup>
 
+  <!-- The integration tests check which generator the host registered. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SafeNlToSql.IntegrationTests" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SafeNlToSql.Application\SafeNlToSql.Application.csproj" />
     <ProjectReference Include="..\SafeNlToSql.Infrastructure\SafeNlToSql.Infrastructure.csproj" />

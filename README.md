@@ -1,6 +1,6 @@
 # safe-nl-to-sql
 
-The goal: ask a question about equipment calibration certificates in plain language, and get rows back. An LLM turns the question into T-SQL, but the model is never trusted. Today two safety layers are built and tested. SqlGuard parses and checks every generated query before it can run, and approved queries run as a read-only database user that has SELECT on six columns only. A rejected query returns a reason instead of being repaired. The `/search` endpoint connects these layers and is tested with a fake generator. Still to come is the LLM that writes the SQL.
+Ask a question about equipment calibration certificates in plain language, and get rows back. An LLM on Azure OpenAI turns the question into T-SQL, but the model is never trusted. Two safety layers that do not depend on it are built and tested. SqlGuard parses and checks every generated query before it can run, and approved queries run as a read-only database user that has SELECT on six columns only. A rejected query returns a reason instead of being repaired. The `/search` endpoint connects the model to these layers. It is tested with a fake generator, and opt-in live tests run it against a real deployment.
 
 ## Status
 
@@ -10,7 +10,7 @@ In progress. Pull request plan:
 - [x] 2. SqlGuard rules 1-3, tests first
 - [x] 3. SqlGuard rules 4-8, tests first
 - [x] 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper
-- [ ] 5. ISqlGenerator with Azure OpenAI, the `/search` endpoint, integration tests with the fake generator
+- [x] 5. ISqlGenerator with Azure OpenAI, the `/search` endpoint, integration tests with the fake generator
 - [ ] 6. README: what it does, how to run, and how it was built
 
 ## SqlGuard rules
@@ -54,14 +54,53 @@ The unit tests need no database and no LLM. They cover every SqlGuard rule with 
 dotnet user-secrets set "ConnectionStrings:Reader" "Server=localhost,1433;Database=SafeNlToSql;User Id=nl_search_reader;Password=<READER_PASSWORD>;TrustServerCertificate=True" --project src/SafeNlToSql.Api
 ```
 
-The API reads the reader connection string at startup and does not start without it. `dotnet run --project src/SafeNlToSql.Api` serves `POST /search`, but no SQL generator is configured yet (Azure OpenAI is the rest of PR 5), so a valid question returns 503. Stop the database with `docker compose down`.
+The API reads the reader connection string at startup and does not start without it.
+
+5. Store the Azure OpenAI settings as user secrets. The generator is tested with `gpt-4.1-mini`. Reasoning models are not supported (it sends temperature 0 and a 300 token output limit by default). First the endpoint and the deployment, replacing each placeholder with your own value:
+
+```bash
+dotnet user-secrets set "AzureOpenAI:Endpoint" "https://<resource>.openai.azure.com/openai/v1/" --project src/SafeNlToSql.Api
+dotnet user-secrets set "AzureOpenAI:Deployment" "<deployment-name>" --project src/SafeNlToSql.Api
+```
+
+Then the API key. It is read without echo, so it never lands in shell history. Run these bash lines one at a time: if they are pasted together, `read` can take the next line as the key.
+
+```bash
+read -rsp "API key: " AOAI_KEY; echo
+dotnet user-secrets set "AzureOpenAI:ApiKey" "$AOAI_KEY" --project src/SafeNlToSql.Api
+unset AOAI_KEY
+```
+
+Without these three settings the API still starts, but a valid question to `/search` returns 503. If you set only some of them, the API does not start.
+
+6. Run the API with `dotnet run --project src/SafeNlToSql.Api`, then ask a question from another terminal:
+
+```bash
+curl -X POST http://localhost:5140/search \
+  -H "Content-Type: application/json" \
+  -d '{"question": "show me all non-compliant microwaves calibrated in the last 30 days"}'
+```
+
+7. Stop the database with `docker compose down`.
+
+### Live tests
+
+The live tests send real questions to your Azure OpenAI deployment. They need the user secrets from step 5, and Docker running (they start their own SQL Server). They run only when `LIVE_AZURE_OPENAI` is exactly `1`; otherwise they are skipped, also in a plain `dotnet test`.
+
+There are 13 live cases. Each run sends one request per case, plus one more when the SDK retries a transient failure. Requests are billed as normal Azure OpenAI usage, although a request blocked by the content filter may not be billed.
+
+```bash
+LIVE_AZURE_OPENAI=1 dotnet test tests/SafeNlToSql.IntegrationTests --filter "Category=LiveAzureOpenAI"
+```
+
+Set the variable on the command as shown instead of exporting it, so later test runs from the same shell do not call Azure. Add `--logger "console;verbosity=detailed"` to see each test's generated SQL and, for a rejection, which layer stopped it.
 
 ## Tech stack
 
 - .NET 10 Minimal API
 - Microsoft.SqlServer.TransactSql.ScriptDom for SQL validation
 - SQL Server in Docker, accessed with Dapper
-- Azure OpenAI for SQL generation (PR 5)
+- Azure OpenAI for SQL generation
 - xUnit, and GitHub Actions for CI
 
 ## How I built this with Claude Code

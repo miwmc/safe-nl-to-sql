@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SafeNlToSql.Api;
 using SafeNlToSql.Application;
 using SafeNlToSql.IntegrationTests.Database;
 
@@ -132,6 +133,20 @@ public class SearchEndpointTests(DatabaseFixture db)
     }
 
     [Fact]
+    public async Task Generator_refusal_returns_200_rejected_ContentFiltered()
+    {
+        using var factory = new SearchApiFactory(db);
+        factory.Generator.AddRefusal(Question, Sentinel);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/search", new { question = Question });
+        var body = await response.Content.ReadAsStringAsync();
+
+        AssertRejected(response.StatusCode, body, SearchReasons.ContentFiltered);
+        AssertNoSentinel(body);
+    }
+
+    [Fact]
     public async Task Blocked_query_returns_rejected_QueryTimeout()
     {
         using var factory = new SearchApiFactory(db);
@@ -208,6 +223,9 @@ public class SearchEndpointTests(DatabaseFixture db)
     {
         using var factory = new SearchApiFactory(db, useFakeGenerator: false);
         using var client = factory.CreateClient();
+
+        // Checked before posting: with any other generator, the request could reach a real model.
+        Assert.IsType<NotConfiguredSqlGenerator>(factory.Services.GetRequiredService<ISqlGenerator>());
 
         using var response = await client.PostAsJsonAsync("/search", new { question = Question });
 
