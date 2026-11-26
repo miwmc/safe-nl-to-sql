@@ -3,7 +3,7 @@
 ## Problem
 Users want to search a table of equipment certificates in plain language, for example "show me all non-compliant microwaves calibrated in the last 30 days". An LLM can turn that into SQL, but an LLM can also produce SQL that reads the wrong data, changes data, or is simply wrong. Prompt instructions alone are not enough, because they rely on the model following them.
 
-This project adds two layers that do not depend on the model: a validator that parses the SQL before it runs, and a database user that can only read one table.
+This project adds layers that do not depend on the model: a validator that parses the SQL before it runs, and a database user that can only read six columns of one table. See "Defence in depth" for all four layers.
 
 ## Data model
 Table `dbo.Certificates` (invented seed data, about 50 rows):
@@ -86,7 +86,7 @@ The list is deliberately small. It grows only when 5b shows the model producing 
 3. SqlGuard rules 4-8, tests first.
 4. Database: docker compose with SQL Server, schema, seed data, read-only user, query execution with Dapper. The executor must run the approved SQL with `QUOTED_IDENTIFIER ON` (the setting SqlGuard's parser assumes, so `"ClientName"` is an identifier for both) and with a command timeout, because the guard bounds rows and table references but not execution time. The executor maps database errors 229 and 230 to `QueryResult.Failed(QueryExecutionReasons.QueryNotPermitted)`, an empty result with a reason.
 5. (Done) ISqlGenerator with Azure OpenAI, the /search endpoint, integration tests with the fake generator. The endpoint turns a failed `QueryResult` (`QueryNotPermitted`, `QueryTimeout`, `QueryFailed`) into a rejected response with that reason. The system prompt tells the model to always reference an allowed column in every table reference (for an unfiltered count, use `COUNT(CertificateNumber)`).
-6. README: what it does, how to run, and "How I built this with Claude Code".
+6. (Done) README: what it does, how to run, and "How I built this with Claude Code".
 
 ## Out of scope
 Frontend, authentication, deployment, caching, conversation history.
